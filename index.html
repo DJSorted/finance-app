@@ -7,7 +7,15 @@
   <link rel="stylesheet" href="/css/theme.css">
 </head>
 <body>
-  <main><h1>Finance App</h1><p>Setup in progress.</p></main>
-  <script type="module" src="/js/core/supabase.js"></script>
+  <header class="topbar">
+    <div class="brand">Finance App</div>
+    <div class="right">
+      <span class="muted" id="company-name"></span>
+      <span class="muted" id="user-email"></span>
+      <button class="btn btn-ghost" id="btn-signout" type="button">Sign out</button>
+    </div>
+  </header>
+  <main class="container" id="app"></main>
+  <script type="module" src="/js/modules/home.js"></script>
 </body>
 </html>

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in | Finance App</title>
+  <link rel="stylesheet" href="/css/theme.css">
+</head>
+<body>
+  <div class="center-screen">
+    <div class="card narrow">
+      <h2 id="title">Sign in</h2>
+      <p class="muted" id="subtitle">Welcome back.</p>
+      <form id="form">
+        <div class="field"><label for="email">Email</label>
+          <input id="email" type="email" autocomplete="username" required></div>
+        <div class="field"><label for="password">Password</label>
+          <input id="password" type="password" autocomplete="current-password" minlength="8" required></div>
+        <button class="btn btn-primary btn-block" id="submit" type="submit">Sign in</button>
+      </form>
+      <p class="muted" style="margin-top:1rem">
+        <a href="#" id="toggle">Need an account? Create one</a>
+      </p>
+    </div>
+  </div>
+
+  <script type="module">
+    import { getSession, signIn, signUp } from '/js/core/auth.js';
+    import { ui } from '/js/core/ui.js';
+
+    if (await getSession()) location.href = '/';
+
+    let mode = 'signin';
+    const $ = (id) => document.getElementById(id);
+
+    $('toggle').addEventListener('click', (e) => {
+      e.preventDefault();
+      mode = mode === 'signin' ? 'signup' : 'signin';
+      const up = mode === 'signup';
+      $('title').textContent = up ? 'Create account' : 'Sign in';
+      $('subtitle').textContent = up ? 'Use at least 8 characters for your password.' : 'Welcome back.';
+      $('submit').textContent = up ? 'Create account' : 'Sign in';
+      $('toggle').textContent = up ? 'Have an account? Sign in' : 'Need an account? Create one';
+      $('password').autocomplete = up ? 'new-password' : 'current-password';
+    });
+
+    $('form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const email = $('email').value.trim();
+      const password = $('password').value;
+      $('submit').disabled = true;
+      try {
+        if (mode === 'signin') {
+          await signIn(email, password);
+          location.href = '/';
+        } else {
+          const res = await signUp(email, password);
+          if (res.session) { location.href = '/'; }
+          else { ui.success('Account created. Check your email to confirm it, then sign in.'); }
+        }
+      } catch (err) {
+        ui.errorFrom(err, 'Could not sign in.');
+      } finally {
+        $('submit').disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
