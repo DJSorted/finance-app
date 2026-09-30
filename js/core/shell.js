@@ -16,6 +16,14 @@ function h(tag, cls, text) {
   return e;
 }
 
+const NAV_KEY = 'navCollapsed';
+function loadCollapsed() {
+  try { return new Set(JSON.parse(localStorage.getItem(NAV_KEY) || '[]')); } catch (e) { return new Set(); }
+}
+function saveCollapsed(set) {
+  try { localStorage.setItem(NAV_KEY, JSON.stringify([...set])); } catch (e) { /* ignore */ }
+}
+
 // Every page calls this first. Returns the signed-in context, or null if it is redirecting.
 // Pass { allowNoCompany: true } on the home page so it can show the company setup form.
 export async function startPage(opts = {}) {
@@ -74,14 +82,34 @@ function buildShell(session, memberships, active) {
   }
   sidebar.append(co);
 
+  const collapsed = loadCollapsed();
   const nav = h('nav');
   NAV.forEach((s) => {
-    nav.append(h('div', 'nav-section', s.section));
+    const hasActive = s.items.some((n) => n.href === path);
+    const open = hasActive || !collapsed.has(s.section);
+
+    const group = h('div', 'nav-group' + (open ? '' : ' collapsed'));
+    const head = h('button', 'nav-section');
+    head.type = 'button';
+    head.setAttribute('aria-expanded', String(open));
+    head.append(h('span', 'nav-caret', '▾'), h('span', '', s.section));
+
+    const items = h('div', 'nav-items');
     s.items.forEach((n) => {
       const a = h('a', n.href === path ? 'active' : '', n.label);
       a.href = n.href;
-      nav.append(a);
+      items.append(a);
     });
+
+    head.addEventListener('click', () => {
+      const isCollapsed = group.classList.toggle('collapsed');
+      head.setAttribute('aria-expanded', String(!isCollapsed));
+      if (isCollapsed) collapsed.add(s.section); else collapsed.delete(s.section);
+      saveCollapsed(collapsed);
+    });
+
+    group.append(head, items);
+    nav.append(group);
   });
   sidebar.append(nav);
 
