@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Financial Calendar | Finance App</title>
+  <link rel="stylesheet" href="/css/theme.css">
+</head>
+<body>
+  <main class="container">
+    <div class="page-head">
+      <div><h2>Financial Calendar</h2><span class="muted" id="company-title"></span></div>
+    </div>
+    <div class="toolbar" id="toolbar"></div>
+    <p class="muted">Periods must be closed in order and reopened in reverse order. A closed period will block new postings once transactions are built.</p>
+    <div id="years"></div>
+    <div class="card">
+      <h3>Financial setup checklist</h3>
+      <div id="checklist"></div>
+    </div>
+  </main>
+  <script type="module" src="/js/modules/calendar.js"></script>
+</body>
+</html>

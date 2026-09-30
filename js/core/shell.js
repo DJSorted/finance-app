@@ -8,6 +8,7 @@ const NAV = [
   { section: 'Setup', items: [
     { href: '/pages/chart.html', label: 'Chart of Accounts' },
     { href: '/pages/reports.html', label: 'Report Layouts' },
+    { href: '/pages/calendar.html', label: 'Financial Calendar' },
   ] },
 ];
 const EDIT_ROLES = ['owner', 'admin', 'accountant'];

@@ -211,3 +211,6 @@ table.report tr.k-error td { color: var(--danger); }
 table.report tr.clickable { cursor: pointer; }
 table.report tr.clickable:hover td { background: var(--surface-2); }
 .err-note { color: var(--danger); font-size: 12px; }
+
+.badge.open { color: var(--success); border-color: var(--success); }
+.badge.closed { color: var(--text-dim); }

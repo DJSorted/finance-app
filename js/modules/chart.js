@@ -11,6 +11,7 @@ const CONTROL_TYPES = [
   ['inventory', 'Inventory'], ['fixed_assets', 'Fixed assets'], ['accum_depreciation', 'Accumulated depreciation'],
   ['grni', 'Goods received not invoiced'], ['wip', 'Work in progress'], ['bank', 'Bank'],
   ['tax', 'Tax'], ['fx', 'Exchange gains / losses'],
+    ['retained_earnings', 'Retained earnings'], ['opening_balance', 'Opening balance equity'],
 ];
 const controlLabel = (v) => (CONTROL_TYPES.find((c) => c[0] === (v || '')) || [, ''])[1] === 'None' ? '' : (CONTROL_TYPES.find((c) => c[0] === (v || '')) || [, ''])[1];
 
