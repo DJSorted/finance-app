@@ -124,3 +124,49 @@ tr.inactive td { opacity: .5; }
 .field.check label { text-transform: none; letter-spacing: 0; font-size: 14px; color: var(--text); }
 .hint { color: var(--text-dim); font-size: 12px; }
 @media (max-width: 560px) { .form-grid { grid-template-columns: 1fr; } }
+
+/* ===== App shell: sidebar + content ===== */
+.app-shell { display: flex; min-height: 100vh; }
+.sidebar { width: 250px; flex: 0 0 250px; background: var(--surface); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; height: 100dvh; overflow-y: auto; }
+.sidebar .brand { padding: 1rem 1.1rem; font-weight: 700; font-size: 16px; border-bottom: 1px solid var(--border); }
+.sidebar .co { padding: .75rem 1.1rem; border-bottom: 1px solid var(--border); }
+.sidebar .co .lbl { color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: .6px; margin-bottom: .25rem; }
+.sidebar .co .co-name { font-weight: 500; overflow-wrap: anywhere; }
+.sidebar nav { flex: 1; padding: .4rem .6rem; }
+.nav-section { padding: .9rem .6rem .3rem; color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: .6px; }
+.sidebar nav a { display: block; padding: .5rem .7rem; margin: 1px 0; border-radius: 6px; color: var(--text-dim); }
+.sidebar nav a:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
+.sidebar nav a.active { background: var(--surface-2); color: var(--text); box-shadow: inset 3px 0 0 var(--primary); }
+.sidebar .foot { padding: .75rem; border-top: 1px solid var(--border); display: grid; gap: .4rem; }
+.sidebar .foot .btn { width: 100%; justify-content: flex-start; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.app-body > main { flex: 1; width: 100%; max-width: none; margin: 0; padding: 1.5rem 2rem; }
+.mobilebar, .sidebar-scrim { display: none; }
+
+/* Tidier headers, tabs and tables */
+.page-head h2 { font-size: 20px; }
+.tabs { overflow-x: auto; }
+.tab { white-space: nowrap; }
+table.grid th { white-space: nowrap; }
+
+/* Tablets and phones */
+@media (max-width: 900px) {
+  .sidebar { position: fixed; z-index: 1200; left: 0; top: 0; bottom: 0; height: auto; width: 280px;
+    transform: translateX(-100%); transition: transform .2s ease; box-shadow: var(--shadow); }
+  body.nav-open .sidebar { transform: none; }
+  body.nav-open .sidebar-scrim { display: block; position: fixed; inset: 0; z-index: 1150; background: rgba(5, 7, 10, .6); }
+  .mobilebar { display: flex; align-items: center; gap: .75rem; padding: .6rem .9rem; background: var(--surface);
+    border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 100; }
+  .mobilebar .brand { font-weight: 700; }
+  .mobilebar .company { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%; }
+  .menu-btn { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px;
+    font-size: 18px; line-height: 1; padding: .35rem .6rem; cursor: pointer; }
+  .app-body > main { padding: 1rem; }
+  .toast-stack { left: .75rem; right: .75rem; max-width: none; }
+  .toolbar .btn { flex: 1 1 auto; }
+  .toolbar .spacer { display: none; }
+}
+
+/* Hide page content until the sidebar layout has wrapped it (stops the narrow-then-wide jump) */
+body:not(.ready) > main { visibility: hidden; }

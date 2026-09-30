@@ -1,26 +1,44 @@
+import { supabase } from './supabase.js';
 import { requireAuth, signOut, getMemberships, getActiveMembership, setActiveCompany } from './auth.js';
 import { ui } from './ui.js';
-import { supabase } from './supabase.js';
 
+// Add new pages here and they appear in the sidebar on every screen.
 const NAV = [
-  { href: '/', label: 'Home' },
-  { href: '/pages/chart.html', label: 'Chart of Accounts' },
+  { section: 'Overview', items: [{ href: '/', label: 'Home' }] },
+  { section: 'Setup', items: [{ href: '/pages/chart.html', label: 'Chart of Accounts' }] },
 ];
 const EDIT_ROLES = ['owner', 'admin', 'accountant'];
 
+function h(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
 // Every page calls this first. Returns the signed-in context, or null if it is redirecting.
-export async function startPage() {
+// Pass { allowNoCompany: true } on the home page so it can show the company setup form.
+export async function startPage(opts = {}) {
+  const reveal = () => document.body.classList.add('ready');
+
   const session = await requireAuth();
   if (!session) return null;
 
   let memberships;
   try { memberships = await getMemberships(session.user.id); }
-  catch (e) { ui.errorFrom(e, 'Could not load your companies.'); return null; }
-  if (!memberships.length) { location.href = '/'; return null; }
+  catch (e) { reveal(); ui.errorFrom(e, 'Could not load your companies.'); return null; }
+
+  if (!memberships.length) {
+    reveal();
+    if (opts.allowNoCompany) return { session, noCompany: true };
+    location.href = '/';
+    return null;
+  }
 
   const active = getActiveMembership(memberships);
   setActiveCompany(active.company_id);
-  renderTopbar(session, memberships, active);
+  buildShell(session, memberships, active);
+  reveal();
 
   return {
     session,
@@ -31,63 +49,95 @@ export async function startPage() {
   };
 }
 
-function renderTopbar(session, memberships, active) {
-  const bar = document.createElement('header');
-  bar.className = 'topbar';
+function buildShell(session, memberships, active) {
+  const path = location.pathname === '/index.html' ? '/' : location.pathname;
+  const main = document.querySelector('main');
 
-  const left = document.createElement('div');
-  left.className = 'left';
-  const brand = document.createElement('div');
-  brand.className = 'brand';
-  brand.textContent = 'Finance App';
-  const nav = document.createElement('nav');
-  nav.className = 'nav';
-  NAV.forEach((n) => {
-    const a = document.createElement('a');
-    a.href = n.href;
-    a.textContent = n.label;
-    if (location.pathname === n.href) a.className = 'active';
-    nav.append(a);
-  });
-  left.append(brand, nav);
+  /* ----- sidebar ----- */
+  const sidebar = h('aside', 'sidebar');
+  sidebar.append(h('div', 'brand', 'Finance App'));
 
-  const right = document.createElement('div');
-  right.className = 'right';
-
+  const co = h('div', 'co');
+  co.append(h('div', 'lbl', 'Company'));
   if (memberships.length > 1) {
-    const sel = document.createElement('select');
-    sel.className = 'compact';
+    const sel = h('select');
     memberships.forEach((m) => {
-      const o = document.createElement('option');
+      const o = h('option', '', m.companies.name);
       o.value = m.company_id;
-      o.textContent = m.companies.name;
       if (m.company_id === active.company_id) o.selected = true;
       sel.append(o);
     });
     sel.addEventListener('change', () => { setActiveCompany(sel.value); location.reload(); });
-    right.append(sel);
+    co.append(sel);
   } else {
-    const name = document.createElement('span');
-    name.className = 'muted';
-    name.textContent = active.companies.name;
-    right.append(name);
+    co.append(h('div', 'co-name', active.companies.name));
   }
+  sidebar.append(co);
 
-  const email = document.createElement('span');
-  email.className = 'muted';
-  email.textContent = session.user.email;
-  const out = document.createElement('button');
-  out.className = 'btn btn-ghost';
+  const nav = h('nav');
+  NAV.forEach((s) => {
+    nav.append(h('div', 'nav-section', s.section));
+    s.items.forEach((n) => {
+      const a = h('a', n.href === path ? 'active' : '', n.label);
+      a.href = n.href;
+      nav.append(a);
+    });
+  });
+  sidebar.append(nav);
+
+  const meta = session.user.user_metadata || {};
+  const who = h('button', 'btn btn-ghost', meta.full_name || session.user.email);
+  who.type = 'button';
+  who.title = 'Edit your display name';
+  who.addEventListener('click', async () => {
+    const saved = await ui.form({
+      title: 'Your profile',
+      fields: [
+        { name: 'full_name', label: 'Display name', required: true, full: true },
+        { name: 'email', label: 'Email', disabled: true, full: true },
+      ],
+      values: { full_name: meta.full_name || '', email: session.user.email },
+      onSubmit: async (v) => {
+        const { error } = await supabase.auth.updateUser({ data: { full_name: v.full_name } });
+        if (error) throw error;
+      },
+    });
+    if (saved) {
+      ui.updated('Profile');
+      setTimeout(() => location.reload(), 600);
+    }
+  });
+
+  const out = h('button', 'btn btn-ghost', 'Sign out');
   out.type = 'button';
-  out.textContent = 'Sign out';
   out.addEventListener('click', async () => {
     const ok = await ui.confirm({ title: 'Sign out', message: 'Sign out of Finance App?', confirmText: 'Sign out' });
     if (!ok) return;
     await signOut();
     location.href = '/pages/login.html';
   });
-  right.append(email, out);
 
-  bar.append(left, right);
-  document.body.prepend(bar);
+  const foot = h('div', 'foot');
+  foot.append(who, out);
+  sidebar.append(foot);
+
+  /* ----- slim top bar for phones and tablets ----- */
+  const menu = h('button', 'menu-btn', '☰');
+  menu.type = 'button';
+  menu.setAttribute('aria-label', 'Open menu');
+  const bar = h('header', 'mobilebar');
+  bar.append(menu, h('span', 'brand', 'Finance App'), h('span', 'muted company', active.companies.name));
+
+  const scrim = h('div', 'sidebar-scrim');
+  const close = () => document.body.classList.remove('nav-open');
+  menu.addEventListener('click', () => document.body.classList.toggle('nav-open'));
+  scrim.addEventListener('click', close);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+
+  /* ----- assemble: the page's own <main> moves into the content area ----- */
+  const body = h('div', 'app-body');
+  body.append(bar, main);
+  const shell = h('div', 'app-shell');
+  shell.append(sidebar, scrim, body);
+  document.body.prepend(shell);
 }
