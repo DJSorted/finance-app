@@ -7,7 +7,8 @@ const session = await requireAuth();
 if (session) init();
 
 async function init() {
-  document.getElementById('user-email').textContent = session.user.email;
+    document.getElementById('user-email').textContent =
+    (session.user.user_metadata && session.user.user_metadata.full_name) || session.user.email;
   document.getElementById('btn-signout').addEventListener('click', async () => {
     const ok = await ui.confirm({ title: 'Sign out', message: 'Sign out of Finance App?', confirmText: 'Sign out' });
     if (!ok) return;
@@ -68,7 +69,8 @@ function showHome(m) {
     <div class="card">
       <h2></h2>
       <p class="muted">Foundation is working. Setups come next.</p>
-      <span class="badge"></span>
+      <p><span class="badge"></span></p>
+      <p><a class="btn btn-primary" href="/pages/chart.html">Chart of Accounts</a></p>
     </div>`;
   app.querySelector('h2').textContent = `Welcome to ${m.companies.name}`;
   app.querySelector('.badge').textContent = `Your role: ${m.role}`;
