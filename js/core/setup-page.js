@@ -14,7 +14,7 @@ function btn(text, cls, onClick) {
 }
 
 // One standard list + add/edit/delete + export screen for a setup table.
-// cfg: { table, noun, plural, file, hint, orderBy, defaults, canAdd, canDelete,
+// cfg: { table, noun, plural, file, hint, orderBy, defaults, canAdd, canDelete, search,
 //        lookups(ctx), columns(lk), fields(lk, row), toForm(row, lk), validate(v, row, rows), toPayload(v, row),
 //        beforeDelete(row, rows), duplicateMessage }
 // Every column needs header and text(row); html(row) is optional and must escape its own output.
@@ -29,6 +29,7 @@ export async function setupPage(ctx, cfg) {
   const canDelete = ctx.canEdit && cfg.canDelete !== false;
   let rows = [];
   let lk = {};
+  let term = '';
 
   async function load() {
     lk = cfg.lookups ? await cfg.lookups(ctx) : {};
@@ -44,17 +45,38 @@ export async function setupPage(ctx, cfg) {
     render();
   }
 
-  function render() {
+  function render() { renderToolbar(); renderTable(); }
+
+  function renderToolbar() {
     toolbar.replaceChildren();
     if (canAdd) toolbar.append(btn(`Add ${cfg.noun.toLowerCase()}`, 'btn-primary', () => openForm(null)));
+    if (cfg.search) {
+      const box = document.createElement('input');
+      box.type = 'search';
+      box.placeholder = 'Search';
+      box.value = term;
+      box.style.maxWidth = '260px';
+      box.addEventListener('input', () => { term = box.value.trim().toLowerCase(); renderTable(); });
+      toolbar.append(box);
+    }
     const sp = document.createElement('span');
     sp.className = 'spacer';
     toolbar.append(sp, btn('Export to Excel', '', doExport));
+  }
 
+  function visibleRows() {
+    if (!term) return rows;
+    const cols = cfg.columns(lk);
+    return rows.filter((r) => cols.some((c) => String(c.text(r)).toLowerCase().includes(term)));
+  }
+
+  function renderTable() {
     if (!rows.length) { panel.innerHTML = `<p class="muted">No ${esc(cfg.plural)} yet.</p>`; return; }
+    const list = visibleRows();
+    if (!list.length) { panel.innerHTML = '<p class="muted">Nothing matches your search.</p>'; return; }
     const cols = cfg.columns(lk);
     const head = cols.map((c) => `<th${c.num ? ' style="text-align:right"' : ''}>${esc(c.header)}</th>`).join('') + '<th></th>';
-    const body = rows.map((r) => {
+    const body = list.map((r) => {
       const tds = cols.map((c) => `<td${c.num ? ' class="num"' : ''}>${c.html ? c.html(r) : esc(c.text(r))}</td>`).join('');
       const acts = ctx.canEdit
         ? `<div class="row-actions"><button class="btn btn-sm" data-act="edit">Edit</button>${canDelete ? '<button class="btn btn-sm" data-act="del">Delete</button>' : ''}</div>`

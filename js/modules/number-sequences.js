@@ -6,7 +6,7 @@ const DOC_TYPES = {
   supplier_bill: 'Supplier bill', supplier_credit_note: 'Supplier credit note', supplier_payment: 'Supplier payment',
   purchase_order: 'Purchase order', goods_received: 'Goods received note', journal: 'Journal',
   stock_adjustment: 'Stock adjustment', stock_transfer: 'Stock transfer', work_order: 'Work order',
-  fixed_asset: 'Fixed asset', customer: 'Customer code', supplier: 'Supplier code', item: 'Item code',
+  fixed_asset: 'Fixed asset', customer: 'Customer code', supplier: 'Supplier code', item_stock: 'Stock item code', item_service: 'Service item code', item_manufactured: 'Manufactured item code',
 };
 const docLabel = (t) => DOC_TYPES[t] || t;
 const nextRef = (r) => r.prefix + String(r.next_number).padStart(r.padding, '0');

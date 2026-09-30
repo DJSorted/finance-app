@@ -16,6 +16,11 @@ const NAV = [
     { href: '/pages/payment-terms.html', label: 'Payment Terms' },
     { href: '/pages/number-sequences.html', label: 'Number Sequences' },
   ] },
+  { section: 'Inventory', items: [
+    { href: '/pages/items.html', label: 'Items' },
+    { href: '/pages/item-categories.html', label: 'Item Categories' },
+    { href: '/pages/units.html', label: 'Units of Measure' },
+  ] },
 ];
 const EDIT_ROLES = ['owner', 'admin', 'accountant'];
 
