@@ -11,11 +11,13 @@
     <div class="card narrow">
       <h2 id="title">Sign in</h2>
       <p class="muted" id="subtitle">Welcome back.</p>
-      <form id="form">
+      <form id="form" novalidate>
         <div class="field"><label for="email">Email</label>
           <input id="email" type="email" autocomplete="username" required></div>
         <div class="field"><label for="password">Password</label>
-          <input id="password" type="password" autocomplete="current-password" minlength="8" required></div>
+          <input id="password" type="password" autocomplete="current-password" required></div>
+        <div class="field" id="confirm-field" hidden><label for="confirm">Confirm password</label>
+          <input id="confirm" type="password" autocomplete="new-password"></div>
         <button class="btn btn-primary btn-block" id="submit" type="submit">Sign in</button>
       </form>
       <p class="muted" style="margin-top:1rem">
@@ -33,21 +35,35 @@
     let mode = 'signin';
     const $ = (id) => document.getElementById(id);
 
-    $('toggle').addEventListener('click', (e) => {
-      e.preventDefault();
-      mode = mode === 'signin' ? 'signup' : 'signin';
+    function setMode(next) {
+      mode = next;
       const up = mode === 'signup';
       $('title').textContent = up ? 'Create account' : 'Sign in';
       $('subtitle').textContent = up ? 'Use at least 8 characters for your password.' : 'Welcome back.';
       $('submit').textContent = up ? 'Create account' : 'Sign in';
       $('toggle').textContent = up ? 'Have an account? Sign in' : 'Need an account? Create one';
       $('password').autocomplete = up ? 'new-password' : 'current-password';
+      $('confirm-field').hidden = !up;
+      $('confirm').value = '';
+    }
+
+    $('toggle').addEventListener('click', (e) => {
+      e.preventDefault();
+      setMode(mode === 'signin' ? 'signup' : 'signin');
     });
 
     $('form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const email = $('email').value.trim();
       const password = $('password').value;
+
+      if (!email || !password) { ui.warn('Enter your email and password.'); return; }
+
+      if (mode === 'signup') {
+        if (password.length < 8) { ui.warn('Your password must be at least 8 characters.'); return; }
+        if (password !== $('confirm').value) { ui.warn('The passwords do not match.'); $('confirm').focus(); return; }
+      }
+
       $('submit').disabled = true;
       try {
         if (mode === 'signin') {
@@ -55,11 +71,26 @@
           location.href = '/';
         } else {
           const res = await signUp(email, password);
-          if (res.session) { location.href = '/'; }
-          else { ui.success('Account created. Check your email to confirm it, then sign in.'); }
+          // With email verification on, an already-registered address comes back with no identities
+          if (res.user && res.user.identities && res.user.identities.length === 0) {
+            ui.warn('An account with this email already exists. Sign in instead.');
+            setMode('signin');
+          } else if (res.session) {
+            location.href = '/';
+          } else {
+            await ui.alert({
+              title: 'Check your email',
+              message: `We sent a confirmation link to ${email}.\nClick it to verify your address, then sign in.`,
+            });
+            setMode('signin');
+          }
         }
       } catch (err) {
-        ui.errorFrom(err, 'Could not sign in.');
+        const msg = /not confirmed/i.test(err.message)
+          ? 'Please confirm your email address first. Check your inbox for the link.'
+          : err.message;
+        ui.error(msg || 'Could not sign in.');
+        console.error(err);
       } finally {
         $('submit').disabled = false;
       }
