@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Report Layouts | Finance App</title>
+  <link rel="stylesheet" href="/css/theme.css">
+</head>
+<body>
+  <main class="container">
+    <div class="page-head">
+      <div><h2>Report Layouts</h2><span class="muted" id="company-title"></span></div>
+    </div>
+    <div class="toolbar" id="format-bar"></div>
+    <p class="muted" id="hint"></p>
+    <div class="split">
+      <div class="card">
+        <h3>Lines</h3>
+        <div class="toolbar" id="line-toolbar"></div>
+        <div id="lines"></div>
+      </div>
+      <div class="card">
+        <h3>Preview</h3>
+        <div class="toolbar" id="preview-toolbar"></div>
+        <div id="preview"></div>
+      </div>
+    </div>
+  </main>
+  <script type="module" src="/js/modules/reports.js"></script>
+</body>
+</html>

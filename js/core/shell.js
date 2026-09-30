@@ -5,7 +5,10 @@ import { ui } from './ui.js';
 // Add new pages here and they appear in the sidebar on every screen.
 const NAV = [
   { section: 'Overview', items: [{ href: '/', label: 'Home' }] },
-  { section: 'Setup', items: [{ href: '/pages/chart.html', label: 'Chart of Accounts' }] },
+  { section: 'Setup', items: [
+    { href: '/pages/chart.html', label: 'Chart of Accounts' },
+    { href: '/pages/reports.html', label: 'Report Layouts' },
+  ] },
 ];
 const EDIT_ROLES = ['owner', 'admin', 'accountant'];
 

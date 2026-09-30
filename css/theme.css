@@ -194,3 +194,20 @@ body:not(.ready) > main { visibility: hidden; }
 .nav-group.collapsed .nav-caret { transform: rotate(-90deg); }
 .nav-group.collapsed .nav-items { display: none; }
 .nav-items { padding-left: .5rem; }
+
+/* Report layouts */
+.split { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr); align-items: start; }
+@media (min-width: 1250px) { .split { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+table.report { width: 100%; border-collapse: collapse; }
+table.report td { padding: .3rem .7rem; }
+table.report td.amt { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.report tr.k-heading td { font-weight: 700; padding-top: .9rem; }
+table.report tr.k-spacer td { height: .9rem; padding: 0; }
+table.report tr.k-account td { color: var(--text-dim); }
+table.report tr.k-header td { font-weight: 500; }
+table.report tr.st-subtotal td { font-weight: 600; border-top: 1px solid var(--border); }
+table.report tr.st-total td { font-weight: 700; border-top: 1px solid var(--text-dim); border-bottom: 3px double var(--text-dim); }
+table.report tr.k-error td { color: var(--danger); }
+table.report tr.clickable { cursor: pointer; }
+table.report tr.clickable:hover td { background: var(--surface-2); }
+.err-note { color: var(--danger); font-size: 12px; }
