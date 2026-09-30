@@ -9,6 +9,12 @@ const NAV = [
     { href: '/pages/chart.html', label: 'Chart of Accounts' },
     { href: '/pages/reports.html', label: 'Report Layouts' },
     { href: '/pages/calendar.html', label: 'Financial Calendar' },
+    { href: '/pages/currencies.html', label: 'Currencies & Rates' },
+  ] },
+  { section: 'Defaults', items: [
+    { href: '/pages/tax.html', label: 'Tax Codes' },
+    { href: '/pages/payment-terms.html', label: 'Payment Terms' },
+    { href: '/pages/number-sequences.html', label: 'Number Sequences' },
   ] },
 ];
 const EDIT_ROLES = ['owner', 'admin', 'accountant'];
