@@ -1,5 +1,5 @@
-// Shared Excel export. sheets: [{ name, columns: [{ key, header, width }], rows: [{...}] }]
-function loadXLSX() {
+// Shared Excel helpers. sheets: [{ name, columns: [{ key, header, width }], rows: [{...}] }]
+export function loadXLSX() {
   if (window.XLSX) return Promise.resolve(window.XLSX);
   return new Promise((resolve, reject) => {
     const s = document.createElement('script');
@@ -21,4 +21,16 @@ export async function exportSheets(filename, sheets) {
     XLSX.utils.book_append_sheet(wb, ws, s.name.slice(0, 31));
   });
   XLSX.writeFile(wb, filename);
+}
+
+// Reads an .xlsx, .xls or .csv file. Returns { sheetName: [ {header: value, ...}, ... ] }
+export async function readWorkbook(file) {
+  const XLSX = await loadXLSX();
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: 'array' });
+  const sheets = {};
+  wb.SheetNames.forEach((name) => {
+    sheets[name] = XLSX.utils.sheet_to_json(wb.Sheets[name], { defval: '', raw: false });
+  });
+  return sheets;
 }

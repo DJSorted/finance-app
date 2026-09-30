@@ -170,3 +170,15 @@ table.grid th { white-space: nowrap; }
 
 /* Hide page content until the sidebar layout has wrapped it (stops the narrow-then-wide jump) */
 body:not(.ready) > main { visibility: hidden; }
+
+/* Import dialog */
+.modal.xwide { max-width: 960px; max-height: 90vh; overflow-y: auto; }
+.file-row { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; margin: .5rem 0 1rem; }
+.file-row input[type=file] { width: auto; }
+.import-block { margin-top: 1rem; }
+.import-block h4 { margin: 1rem 0 .4rem; }
+.preview-scroll { max-height: 300px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+.badge.st-new { color: var(--success); border-color: var(--success); }
+.badge.st-update { color: var(--primary); border-color: var(--primary); }
+.badge.st-skip { color: var(--text-dim); }
+.badge.st-error { color: var(--danger); border-color: var(--danger); }

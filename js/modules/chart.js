@@ -2,6 +2,7 @@ import { supabase } from '../core/supabase.js';
 import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
+import { openImport } from './chart-import.js';
 
 const ctx = await startPage();
 
@@ -159,7 +160,13 @@ function renderToolbar() {
   toolbar.append(btn('Expand all', '', () => setAll(false)), btn('Collapse all', '', () => setAll(true)));
   const sp = document.createElement('span');
   sp.className = 'spacer';
-  toolbar.append(sp, btn('Export to Excel', '', doExport));
+  toolbar.append(sp);
+  if (ctx.canEdit) {
+    toolbar.append(btn('Import', '', () => openImport({
+      ctx, tab, groups, accounts, currencies, controlTypes: CONTROL_TYPES, onDone: refresh,
+    })));
+  }
+  toolbar.append(btn('Export to Excel', '', doExport));
   hint.textContent = tab === 'groups'
     ? 'Groups sit under the Income Statement or Balance Sheet class, up to 4 levels deep. They control how accounts total in reports.'
     : 'Accounts nest up to 3 levels. Only posting accounts hold transactions, and each one belongs to a group.';
