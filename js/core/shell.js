@@ -19,6 +19,13 @@ function h(tag, cls, text) {
   return e;
 }
 
+// Makes /pages/chart.html, /pages/chart and /pages/chart/ all compare as equal
+function normPath(p) {
+  let x = p.replace(/\.html$/, '').replace(/\/index$/, '');
+  if (x.length > 1) x = x.replace(/\/$/, '');
+  return x || '/';
+}
+
 const NAV_KEY = 'navCollapsed';
 function loadCollapsed() {
   try { return new Set(JSON.parse(localStorage.getItem(NAV_KEY) || '[]')); } catch (e) { return new Set(); }
@@ -61,7 +68,7 @@ export async function startPage(opts = {}) {
 }
 
 function buildShell(session, memberships, active) {
-  const path = location.pathname === '/index.html' ? '/' : location.pathname;
+  const path = normPath(location.pathname);
   const main = document.querySelector('main');
 
   /* ----- sidebar ----- */
@@ -88,7 +95,7 @@ function buildShell(session, memberships, active) {
   const collapsed = loadCollapsed();
   const nav = h('nav');
   NAV.forEach((s) => {
-    const hasActive = s.items.some((n) => n.href === path);
+    const hasActive = s.items.some((n) => normPath(n.href) === path);
     const open = hasActive || !collapsed.has(s.section);
 
     const group = h('div', 'nav-group' + (open ? '' : ' collapsed'));
@@ -99,7 +106,7 @@ function buildShell(session, memberships, active) {
 
     const items = h('div', 'nav-items');
     s.items.forEach((n) => {
-      const a = h('a', n.href === path ? 'active' : '', n.label);
+      const a = h('a', normPath(n.href) === path ? 'active' : '', n.label);
       a.href = n.href;
       items.append(a);
     });
