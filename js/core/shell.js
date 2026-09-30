@@ -12,6 +12,7 @@ const NAV = [
     { href: '/pages/currencies.html', label: 'Currencies & Rates' },
   ] },
   { section: 'Defaults', items: [
+    { href: '/pages/company-settings.html', label: 'Company Defaults' },
     { href: '/pages/tax.html', label: 'Tax Codes' },
     { href: '/pages/payment-terms.html', label: 'Payment Terms' },
     { href: '/pages/number-sequences.html', label: 'Number Sequences' },
@@ -20,7 +21,10 @@ const NAV = [
     { href: '/pages/items.html', label: 'Items' },
     { href: '/pages/item-categories.html', label: 'Item Categories' },
     { href: '/pages/units.html', label: 'Units of Measure' },
+    { href: '/pages/warehouses.html', label: 'Warehouses' },
   ] },
+  { section: 'Sales', items: [{ href: '/pages/customers.html', label: 'Customers' }] },
+  { section: 'Purchases', items: [{ href: '/pages/suppliers.html', label: 'Suppliers' }] },
 ];
 const EDIT_ROLES = ['owner', 'admin', 'accountant'];
 
