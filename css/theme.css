@@ -214,3 +214,6 @@ table.report tr.clickable:hover td { background: var(--surface-2); }
 
 .badge.open { color: var(--success); border-color: var(--success); }
 .badge.closed { color: var(--text-dim); }
+
+.nav-section.static { cursor: default; padding-left: 1.9rem; }
+.nav-section.static:hover { color: var(--nav-group); }

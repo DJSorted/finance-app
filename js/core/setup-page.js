@@ -1,6 +1,7 @@
 import { supabase } from './supabase.js';
 import { ui } from './ui.js';
 import { exportSheets } from './export.js';
+import { openSetupImport, hasImport } from './setup-import.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -61,7 +62,11 @@ export async function setupPage(ctx, cfg) {
     }
     const sp = document.createElement('span');
     sp.className = 'spacer';
-    toolbar.append(sp, btn('Export to Excel', '', doExport));
+    toolbar.append(sp);
+    if (ctx.canEdit && hasImport(cfg.table)) {
+      toolbar.append(btn('Import', '', () => openSetupImport({ ctx, cfg, lk, rows, onDone: refresh })));
+    }
+    toolbar.append(btn('Export to Excel', '', doExport));
   }
 
   function visibleRows() {

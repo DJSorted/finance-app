@@ -4,8 +4,9 @@ import { ui } from './ui.js';
 
 // Add new pages here and they appear in the sidebar on every screen.
 const NAV = [
-  { section: 'Overview', items: [{ href: '/', label: 'Home' }] },
+  { section: 'Overview', pinned: true, items: [{ href: '/', label: 'Home' }] },
   { section: 'Setup', items: [
+    { href: '/pages/company.html', label: 'Company Profile' },
     { href: '/pages/chart.html', label: 'Chart of Accounts' },
     { href: '/pages/reports.html', label: 'Report Layouts' },
     { href: '/pages/calendar.html', label: 'Financial Calendar' },
@@ -42,11 +43,11 @@ function normPath(p) {
   return x || '/';
 }
 
-const NAV_KEY = 'navCollapsed';
-function loadCollapsed() {
+const NAV_KEY = 'navExpanded';
+function loadExpanded() {
   try { return new Set(JSON.parse(localStorage.getItem(NAV_KEY) || '[]')); } catch (e) { return new Set(); }
 }
-function saveCollapsed(set) {
+function saveExpanded(set) {
   try { localStorage.setItem(NAV_KEY, JSON.stringify([...set])); } catch (e) { /* ignore */ }
 }
 
@@ -108,18 +109,9 @@ function buildShell(session, memberships, active) {
   }
   sidebar.append(co);
 
-  const collapsed = loadCollapsed();
+    const expanded = loadExpanded();
   const nav = h('nav');
   NAV.forEach((s) => {
-    const hasActive = s.items.some((n) => normPath(n.href) === path);
-    const open = hasActive || !collapsed.has(s.section);
-
-    const group = h('div', 'nav-group' + (open ? '' : ' collapsed'));
-    const head = h('button', 'nav-section');
-    head.type = 'button';
-    head.setAttribute('aria-expanded', String(open));
-    head.append(h('span', 'nav-caret', '▾'), h('span', '', s.section));
-
     const items = h('div', 'nav-items');
     s.items.forEach((n) => {
       const a = h('a', normPath(n.href) === path ? 'active' : '', n.label);
@@ -127,13 +119,26 @@ function buildShell(session, memberships, active) {
       items.append(a);
     });
 
+    if (s.pinned) {
+      const fixed = h('div', 'nav-group');
+      fixed.append(h('div', 'nav-section static', s.section), items);
+      nav.append(fixed);
+      return;
+    }
+
+    const hasActive = s.items.some((n) => normPath(n.href) === path);
+    const open = hasActive || expanded.has(s.section);
+    const group = h('div', 'nav-group' + (open ? '' : ' collapsed'));
+    const head = h('button', 'nav-section');
+    head.type = 'button';
+    head.setAttribute('aria-expanded', String(open));
+    head.append(h('span', 'nav-caret', '▾'), h('span', '', s.section));
     head.addEventListener('click', () => {
       const isCollapsed = group.classList.toggle('collapsed');
       head.setAttribute('aria-expanded', String(!isCollapsed));
-      if (isCollapsed) collapsed.add(s.section); else collapsed.delete(s.section);
-      saveCollapsed(collapsed);
+      if (isCollapsed) expanded.delete(s.section); else expanded.add(s.section);
+      saveExpanded(expanded);
     });
-
     group.append(head, items);
     nav.append(group);
   });
