@@ -217,3 +217,15 @@ table.report tr.clickable:hover td { background: var(--surface-2); }
 
 .nav-section.static { cursor: default; padding-left: 1.9rem; }
 .nav-section.static:hover { color: var(--nav-group); }
+
+/* Journal editor */
+.lines-wrap { overflow-x: auto; margin: .75rem 0; }
+.lines-table { width: 100%; border-collapse: collapse; min-width: 860px; }
+.lines-table th { text-align: left; color: var(--text-dim); font-weight: 500; font-size: 12px; padding: .3rem; }
+.lines-table td { padding: .25rem .3rem; vertical-align: top; }
+.lines-table input, .lines-table select { padding: .35rem .45rem; }
+.totals-bar { display: flex; gap: 1.5rem; flex-wrap: wrap; padding: .5rem .2rem; font-family: var(--mono); }
+.totals-bar .ok { color: var(--success); }
+.totals-bar .bad { color: var(--danger); }
+.modal-actions .spacer { flex: 1; }
+table.grid tr.clickable { cursor: pointer; }

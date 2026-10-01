@@ -5,6 +5,10 @@ import { ui } from './ui.js';
 // Add new pages here and they appear in the sidebar on every screen.
 const NAV = [
   { section: 'Overview', pinned: true, items: [{ href: '/', label: 'Home' }] },
+    { section: 'Accounting', items: [
+    { href: '/pages/journals.html', label: 'Journals' },
+    { href: '/pages/trial-balance.html', label: 'Trial Balance' },
+  ] },
   { section: 'Setup', items: [
     { href: '/pages/company.html', label: 'Company Profile' },
     { href: '/pages/chart.html', label: 'Chart of Accounts' },

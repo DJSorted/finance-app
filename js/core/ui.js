@@ -28,11 +28,11 @@ export function toast(message, type = 'info', ms = 3500) {
 }
 
 // Generic dialog. Resolves with the value of the clicked button (or dismissValue on Esc/backdrop).
-export function dialog({ title, message, node, buttons, dismissValue = null }) {
+export function dialog({ title, message, node, buttons, dismissValue = null, wide = false }) {
   return new Promise((resolve) => {
     const prevFocus = document.activeElement;
     const backdrop = el('div', 'modal-backdrop');
-    const box = el('div', 'modal');
+    const box = el('div', 'modal' + (wide ? ' xwide' : ''));
     box.setAttribute('role', 'dialog');
     box.setAttribute('aria-modal', 'true');
     box.append(el('h3', 'modal-title', title || ''));
