@@ -105,7 +105,7 @@ function renderTable() {
     <td>${esc(j.journal_no || 'Draft')}</td><td>${j.journal_date}</td><td>${esc(j.description)}</td>
     <td>${esc(j.reference || '')}</td>
     <td><span class="badge ${j.status === 'posted' ? 'open' : ''}">${j.status === 'posted' ? 'Posted' : 'Draft'}</span>
-      ${j.reversed_by ? '<span class="badge">Reversed</span>' : ''}${j.reversal_of ? '<span class="badge">Reversal</span>' : ''}</td>
+        ${j.reversed_by ? '<span class="badge">Reversed</span>' : ''}${j.reversal_of ? '<span class="badge">Reversal</span>' : ''}${j.control_override ? '<span class="badge st-error">Override</span>' : ''}</td>
     <td class="num">${money(total(j))}</td></tr>`).join('');
   panel.innerHTML = `<div class="table-wrap"><table class="grid"><thead><tr>
     <th>No</th><th>Date</th><th>Description</th><th>Reference</th><th>Status</th><th style="text-align:right">Amount</th>
@@ -172,6 +172,26 @@ async function openEditor(existing) {
   const head = el('div', 'form-grid');
   head.append(field('Date *', dateIn), field('Reference', refIn), field('Description *', descIn, true));
   box.append(head);
+
+  const canOverride = ['owner', 'admin'].includes(ctx.role);
+  let ovBox = null;
+  let ovReason = null;
+  if (canOverride) {
+    ovBox = el('input');
+    ovBox.type = 'checkbox';
+    ovBox.checked = !!(existing && existing.control_override);
+    const ovRow = el('div', 'field check');
+    ovRow.append(ovBox, el('label', '', 'Control account override (to correct inventory, goods received, work in progress, asset or other protected accounts)'));
+    ovReason = el('input');
+    ovReason.placeholder = 'Reason for the override (required)';
+    ovReason.value = existing ? (existing.override_reason || '') : '';
+    const ovReasonRow = el('div', 'field');
+    ovReasonRow.append(ovReason);
+    const syncOv = () => { ovReasonRow.style.display = ovBox.checked ? '' : 'none'; };
+    ovBox.addEventListener('change', syncOv);
+    syncOv();
+    box.append(ovRow, ovReasonRow);
+  }
 
   const wrap = el('div', 'lines-wrap');
   const table = el('table', 'lines-table');
@@ -318,6 +338,7 @@ async function openEditor(existing) {
   function collect() {
     if (!dateIn.value) throw new Error('Enter the journal date.');
     if (!descIn.value.trim()) throw new Error('Enter a description.');
+    if (ovBox && ovBox.checked && !ovReason.value.trim()) throw new Error('Enter the reason for the override.');
     const out = [];
     rows.forEach((r, i) => {
       const dv = Number(r.dr.value) || 0;
@@ -346,6 +367,8 @@ async function openEditor(existing) {
     const { data, error } = await supabase.rpc('save_journal', {
       p_company: ctx.companyId, p_journal: journalId, p_date: dateIn.value,
       p_description: descIn.value, p_reference: refIn.value, p_lines,
+      p_override: ovBox ? ovBox.checked : false,
+      p_override_reason: ovBox && ovBox.checked ? ovReason.value : null,
     });
     if (error) throw error;
     journalId = data;
@@ -398,6 +421,7 @@ async function openViewer(j) {
   const notes = [`${j.journal_date} · ${j.description}${j.reference ? ` · Ref ${j.reference}` : ''}`];
   if (j.reversal_of) notes.push(`Reversal of ${noOf(j.reversal_of)}`);
   if (j.reversed_by) notes.push(`Reversed by ${noOf(j.reversed_by)}`);
+  if (j.control_override) notes.push(`Control account override: ${j.override_reason}`);
   node.append(el('p', 'muted', notes.join('\n')));
   node.firstChild.style.whiteSpace = 'pre-line';
 
@@ -426,7 +450,7 @@ async function openViewer(j) {
   node.append(tableWrap);
 
   const buttons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }];
-  if (CAN_POST && !j.reversed_by && !j.reversal_of) buttons.push({ label: 'Reverse', value: 'reverse', className: 'btn-danger' });
+  if (CAN_POST && !j.reversed_by && !j.reversal_of && j.source_type === 'manual') buttons.push({ label: 'Reverse', value: 'reverse', className: 'btn-danger' });
   const res = await ui.dialog({ title: `Journal ${j.journal_no}`, node, buttons, dismissValue: 'close', wide: true });
   if (res === 'reverse') await reverseJournal(j);
 }

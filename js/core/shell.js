@@ -28,7 +28,11 @@ const NAV = [
     { href: '/pages/units.html', label: 'Units of Measure' },
     { href: '/pages/warehouses.html', label: 'Warehouses' },
   ] },
-  { section: 'Sales', items: [{ href: '/pages/customers.html', label: 'Customers' }] },
+    { section: 'Sales', items: [
+    { href: '/pages/invoices.html', label: 'Invoices' },
+    { href: '/pages/credit-notes.html', label: 'Credit Notes' },
+    { href: '/pages/customers.html', label: 'Customers' },
+  ] },
   { section: 'Purchases', items: [{ href: '/pages/suppliers.html', label: 'Suppliers' }] },
 ];
 const EDIT_ROLES = ['owner', 'admin', 'accountant'];
