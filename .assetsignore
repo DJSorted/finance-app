@@ -1,0 +1,7 @@
+sql/
+README.md
+wrangler.jsonc
+wrangler.json
+wrangler.toml
+.assetsignore
+.gitignore

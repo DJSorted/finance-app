@@ -18,10 +18,41 @@ const FIELDS = [
   { key: 'address', label: 'Address', type: 'textarea', full: true },
 ];
 
+async function changeBase(current) {
+  const { data: list, error } = await supabase.from('currencies').select('code, name').order('code');
+  if (error) return ui.errorFrom(error, 'Could not load currencies.');
+  let chosen = null;
+  const picked = await ui.form({
+    title: 'Change base currency',
+    fields: [{
+      name: 'code', label: 'New base currency', type: 'select', required: true, full: true,
+      options: list.map((c) => ({ value: c.code, label: `${c.code} - ${c.name}` })),
+      hint: 'Only possible before any transaction is posted. Enabled currencies, exchange rates and rate rules are kept.',
+    }],
+    values: { code: current },
+    onSubmit: async (v) => {
+      if (v.code === current) throw new Error('That is already the base currency.');
+      chosen = v.code;
+    },
+  });
+  if (!picked || !chosen) return;
+  const ok = await ui.confirm({
+    title: 'Change base currency',
+    message: `Change the base currency from ${current} to ${chosen}?\nThis is only allowed while no transactions exist, and it cannot be changed again after the first posting.`,
+    confirmText: 'Change', danger: true,
+  });
+  if (!ok) return;
+  const { error: e2 } = await supabase.rpc('change_base_currency', { p_company: ctx.companyId, p_code: chosen });
+  if (e2) return ui.errorFrom(e2);
+  ui.updated('Base currency');
+  setTimeout(() => location.reload(), 700);
+}
+
 async function main() {
   document.getElementById('company-title').textContent = ctx.company.name;
   const cid = ctx.companyId;
   const canEdit = ['owner', 'admin'].includes(ctx.role);
+  const isOwner = ctx.role === 'owner';
 
   const [co, cur] = await Promise.all([
     supabase.from('companies').select('*').eq('id', cid).single(),
@@ -29,6 +60,7 @@ async function main() {
   ]);
   for (const r of [co, cur]) if (r.error) { ui.errorFrom(r.error, 'Could not load the company profile.'); return; }
 
+  const baseCode = cur.data ? cur.data.code : '';
   const base = cur.data ? `${cur.data.code} - ${(cur.data.currencies || {}).name || ''}` : '';
   const fieldHtml = FIELDS.map((f) => {
     const input = f.type === 'textarea'
@@ -39,13 +71,18 @@ async function main() {
 
   document.getElementById('panel').innerHTML = `<div class="card" style="max-width:760px">
     <div class="form-grid">${fieldHtml}
-      <div class="field full"><label>Base currency</label><input value="${esc(base)}" disabled>
-        <span class="hint">Fixed once transactions are posted.</span></div>
+      <div class="field full"><label>Base currency</label>
+        <div style="display:flex;gap:.5rem"><input value="${esc(base)}" disabled>
+          ${isOwner ? '<button class="btn" id="chg-base" type="button">Change</button>' : ''}</div>
+        <span class="hint">Can be changed by the owner until the first transaction is posted.</span></div>
     </div>
     ${canEdit ? '<button class="btn btn-primary" id="save" type="button">Save</button>'
       : '<p class="muted">Only owners and admins can edit the company profile.</p>'}
   </div>`;
   FIELDS.forEach((f) => { document.getElementById(`f_${f.key}`).value = co.data[f.key] || ''; });
+
+  const chg = document.getElementById('chg-base');
+  if (chg) chg.addEventListener('click', () => changeBase(baseCode));
 
   const save = document.getElementById('save');
   if (!save) return;
@@ -59,7 +96,7 @@ async function main() {
     save.disabled = false;
     if (error) return ui.errorFrom(error);
     ui.saved('Company profile');
-    setTimeout(() => location.reload(), 700);   // the new name appears in the menu
+    setTimeout(() => location.reload(), 700);
   });
 }
 
