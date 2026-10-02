@@ -37,9 +37,10 @@ const NAV = [
     { href: '/pages/debtors-ageing.html', label: 'Debtors Ageing' },
     { href: '/pages/customers.html', label: 'Customers' },
   ] },
-   { section: 'Purchases', items: [
+  { section: 'Purchases', items: [
     { href: '/pages/bills.html', label: 'Bills' },
     { href: '/pages/supplier-credit-notes.html', label: 'Supplier Credit Notes' },
+    { href: '/pages/payments.html', label: 'Supplier Payments' },
     { href: '/pages/suppliers.html', label: 'Suppliers' },
   ] },
 ];

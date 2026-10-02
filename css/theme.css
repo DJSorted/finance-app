@@ -238,3 +238,31 @@ table.grid tr.clickable { cursor: pointer; }
 .lines-table td.num { white-space: nowrap; min-width: 110px; }
 
 .brand-logo { display: block; max-height: 40px; max-width: 100%; object-fit: contain; }
+
+/* Wider document dialogs so line tables fit a PC screen without scrolling */
+.modal.xwide { max-width: min(1400px, 96vw); }
+.lines-table.doc-lines { width: 100%; min-width: 900px; table-layout: fixed; }
+.doc-lines th.c-item { width: 16%; }
+.doc-lines th.c-desc { width: 20%; }
+.doc-lines th.c-qty { width: 7%; }
+.doc-lines th.c-price { width: 12%; }
+.doc-lines th.c-tax { width: 11%; }
+.doc-lines th.c-acc { width: 18%; }
+.doc-lines th.c-net { width: 11%; }
+.doc-lines th.c-del { width: 5%; }
+.doc-lines td { overflow: hidden; }
+.lines-table.doc-lines input[type=number] { min-width: 0; }
+.doc-lines select, .doc-lines input { min-width: 0; }
+.doc-lines td.num { text-align: right; white-space: nowrap; }
+
+/* Document dialogs get an explicit width: a dialog sized only by max-width shrinks to its content */
+.modal.xwide { width: min(1400px, 96vw); max-width: none; }
+.doc-lines th.c-item { width: 15%; }
+.doc-lines th.c-desc { width: 19%; }
+.doc-lines th.c-qty { width: 7%; }
+.doc-lines th.c-price { width: 12%; }
+.doc-lines th.c-tax { width: 13%; }
+.doc-lines th.c-acc { width: 17%; }
+.doc-lines th.c-net { width: 12%; }
+.doc-lines th.c-del { width: 5%; }
+.doc-lines select { text-overflow: ellipsis; }
