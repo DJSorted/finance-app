@@ -41,6 +41,8 @@ const NAV = [
     { href: '/pages/bills.html', label: 'Bills' },
     { href: '/pages/supplier-credit-notes.html', label: 'Supplier Credit Notes' },
     { href: '/pages/payments.html', label: 'Supplier Payments' },
+    { href: '/pages/supplier-statement.html', label: 'Supplier Statement' },
+    { href: '/pages/creditors-ageing.html', label: 'Creditors Ageing' },
     { href: '/pages/suppliers.html', label: 'Suppliers' },
   ] },
 ];
