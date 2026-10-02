@@ -1,5 +1,5 @@
-// A reusable "apply to invoices" grid.
-// items: [{ id, doc_no, doc_date, due_date, outstanding, fx_rate }], oldest first.
+// A reusable allocation grid.
+// items: [{ id, doc_no, doc_date, due_date, outstanding, fx_rate, ... }]; any extra fields are kept on the item.
 function el(tag, cls, text) {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -10,7 +10,12 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const money = (n, d = 2) => Number(n).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
 const roundTo = (n, d) => { const f = 10 ** d; return Math.round((n + Number.EPSILON) * f) / f; };
 
-export function createAllocationGrid({ onChange = () => {} } = {}) {
+export function createAllocationGrid({
+  onChange = () => {},
+  firstHeader = 'Invoice',
+  emptyText = 'No open invoices in this currency for this customer.',
+  autoLabel = 'Allocate oldest first',
+} = {}) {
   let items = [];
   let total = 0;
   let dec = 2;
@@ -18,7 +23,7 @@ export function createAllocationGrid({ onChange = () => {} } = {}) {
 
   const node = el('div');
   const bar = el('div', 'toolbar');
-  const autoBtn = el('button', 'btn btn-sm', 'Allocate oldest first');
+  const autoBtn = el('button', 'btn btn-sm', autoLabel);
   const clearBtn = el('button', 'btn btn-sm', 'Clear');
   autoBtn.type = 'button';
   clearBtn.type = 'button';
@@ -27,7 +32,7 @@ export function createAllocationGrid({ onChange = () => {} } = {}) {
   const wrap = el('div', 'lines-wrap');
   const table = el('table', 'lines-table');
   table.style.minWidth = '560px';
-  table.innerHTML = '<thead><tr><th>Invoice</th><th>Date</th><th>Due</th><th style="text-align:right">Outstanding</th><th>Apply</th></tr></thead>';
+  table.innerHTML = `<thead><tr><th>${esc(firstHeader)}</th><th>Date</th><th>Due</th><th style="text-align:right">Outstanding</th><th>Apply</th></tr></thead>`;
   const tbody = el('tbody');
   table.append(tbody);
   wrap.append(table);
@@ -37,7 +42,7 @@ export function createAllocationGrid({ onChange = () => {} } = {}) {
     tbody.replaceChildren();
     inputs.clear();
     if (!items.length) {
-      tbody.innerHTML = '<tr><td colspan="5" class="muted">No open invoices in this currency for this customer.</td></tr>';
+      tbody.innerHTML = `<tr><td colspan="5" class="muted">${esc(emptyText)}</td></tr>`;
       return;
     }
     items.forEach((it) => {

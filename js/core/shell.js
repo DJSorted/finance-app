@@ -33,6 +33,8 @@ const NAV = [
     { href: '/pages/invoices.html', label: 'Invoices' },
     { href: '/pages/credit-notes.html', label: 'Credit Notes' },
     { href: '/pages/receipts.html', label: 'Receipts' },
+    { href: '/pages/customer-statement.html', label: 'Customer Statement' },
+    { href: '/pages/debtors-ageing.html', label: 'Debtors Ageing' },
     { href: '/pages/customers.html', label: 'Customers' },
   ] },
   { section: 'Purchases', items: [{ href: '/pages/suppliers.html', label: 'Suppliers' }] },
