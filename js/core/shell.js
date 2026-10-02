@@ -1,6 +1,7 @@
 import { supabase } from './supabase.js';
 import { requireAuth, signOut, getMemberships, getActiveMembership, setActiveCompany } from './auth.js';
 import { ui } from './ui.js';
+import { logoUrl } from './logo.js';
 
 // Add new pages here and they appear in the sidebar on every screen.
 const NAV = [
@@ -98,7 +99,16 @@ function buildShell(session, memberships, active) {
 
   /* ----- sidebar ----- */
   const sidebar = h('aside', 'sidebar');
-  sidebar.append(h('div', 'brand', 'Finance App'));
+  const brand = h('div', 'brand');
+  if (active.companies.logo_path) {
+    const img = h('img', 'brand-logo');
+    img.alt = active.companies.name;
+    img.src = logoUrl(active.companies);
+    brand.append(img);
+  } else {
+    brand.textContent = 'Finance App';
+  }
+  sidebar.append(brand);
 
   const co = h('div', 'co');
   co.append(h('div', 'lbl', 'Company'));

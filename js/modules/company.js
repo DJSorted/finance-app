@@ -1,6 +1,7 @@
 import { supabase } from '../core/supabase.js';
 import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
+import { logoUrl } from '../core/logo.js';
 
 const ctx = await startPage();
 
@@ -69,8 +70,15 @@ async function main() {
     return `<div class="field${f.full ? ' full' : ''}"><label for="f_${f.key}">${esc(f.label)}${f.required ? ' *' : ''}</label>${input}${f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ''}</div>`;
   }).join('');
 
+    const logoHtml = `<div class="field full"><label>Logo</label>
+    <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
+      <div id="logo-preview" style="min-width:120px;min-height:48px;display:flex;align-items:center"></div>
+      ${canEdit ? '<input id="logo-file" type="file" accept="image/png,image/jpeg,image/webp" style="width:auto"><button class="btn btn-sm" id="logo-remove" type="button">Remove logo</button>' : ''}
+    </div>
+    <span class="hint">PNG, JPEG or WebP, up to 1 MB. Shown in the menu and later on documents. Anyone with the image link can view it.</span></div>`;
+
   document.getElementById('panel').innerHTML = `<div class="card" style="max-width:760px">
-    <div class="form-grid">${fieldHtml}
+    <div class="form-grid">${logoHtml}${fieldHtml}
       <div class="field full"><label>Base currency</label>
         <div style="display:flex;gap:.5rem"><input value="${esc(base)}" disabled>
           ${isOwner ? '<button class="btn" id="chg-base" type="button">Change</button>' : ''}</div>
@@ -80,6 +88,61 @@ async function main() {
       : '<p class="muted">Only owners and admins can edit the company profile.</p>'}
   </div>`;
   FIELDS.forEach((f) => { document.getElementById(`f_${f.key}`).value = co.data[f.key] || ''; });
+
+    const LOGO_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
+  const preview = document.getElementById('logo-preview');
+  const currentUrl = logoUrl(co.data);
+  if (currentUrl) {
+    const img = document.createElement('img');
+    img.src = currentUrl;
+    img.alt = 'Company logo';
+    img.style.cssText = 'max-height:64px;max-width:220px';
+    preview.append(img);
+  } else {
+    const none = document.createElement('span');
+    none.className = 'muted';
+    none.textContent = 'No logo yet';
+    preview.append(none);
+  }
+
+  async function setLogo(path) {
+    const { data: upd, error } = await supabase.from('companies')
+      .update({ logo_path: path, logo_updated_at: new Date().toISOString() }).eq('id', cid).select('id');
+    if (error) throw error;
+    if (!upd || !upd.length) throw new Error('You do not have permission to change the logo.');
+  }
+
+  const fileIn = document.getElementById('logo-file');
+  if (fileIn) {
+    fileIn.addEventListener('change', async () => {
+      const f = fileIn.files[0];
+      if (!f) return;
+      if (!LOGO_TYPES[f.type]) { fileIn.value = ''; return ui.warn('Use a PNG, JPEG or WebP image.'); }
+      if (f.size > 1048576) { fileIn.value = ''; return ui.warn('The logo must be 1 MB or smaller.'); }
+      const path = `${cid}/logo-${Date.now()}.${LOGO_TYPES[f.type]}`;
+      const up = await supabase.storage.from('logos').upload(path, f, { contentType: f.type });
+      if (up.error) { fileIn.value = ''; return ui.errorFrom(up.error, 'Could not upload the logo.'); }
+      try {
+        await setLogo(path);
+      } catch (e) {
+        await supabase.storage.from('logos').remove([path]);
+        fileIn.value = '';
+        return ui.errorFrom(e, 'Could not save the logo.');
+      }
+      if (co.data.logo_path) await supabase.storage.from('logos').remove([co.data.logo_path]);
+      ui.saved('Logo');
+      setTimeout(() => location.reload(), 600);
+    });
+
+    document.getElementById('logo-remove').addEventListener('click', async () => {
+      if (!co.data.logo_path) return ui.warn('There is no logo to remove.');
+      if (!(await ui.confirmDelete('Logo'))) return;
+      try { await setLogo(null); } catch (e) { return ui.errorFrom(e); }
+      await supabase.storage.from('logos').remove([co.data.logo_path]);
+      ui.deleted('Logo');
+      setTimeout(() => location.reload(), 600);
+    });
+  }
 
   const chg = document.getElementById('chg-base');
   if (chg) chg.addEventListener('click', () => changeBase(baseCode));

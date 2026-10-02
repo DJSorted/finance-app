@@ -34,7 +34,7 @@ export async function signOut() {
 export async function getMemberships(userId) {
   const { data, error } = await supabase
     .from('company_members')
-    .select('role, company_id, companies(id, name)')
+    .select('role, company_id, companies(id, name, logo_path, logo_updated_at)')
     .eq('user_id', userId);
   if (error) throw error;
   return data;

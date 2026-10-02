@@ -219,7 +219,7 @@ async function openEditor(existing) {
   box.append(head);
 
   const wrap = el('div', 'lines-wrap');
-  const table = el('table', 'lines-table');
+  const table = el('table', 'lines-table sales-lines');
   table.innerHTML = '<thead><tr><th style="min-width:200px">Item</th><th style="min-width:200px">Description</th>'
     + '<th>Qty</th><th>Price</th><th style="min-width:130px">Tax</th><th style="min-width:200px">Account</th>'
     + '<th style="text-align:right">Net</th><th></th></tr></thead>';
