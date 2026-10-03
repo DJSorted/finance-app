@@ -28,6 +28,9 @@ const NAV = [
     { href: '/pages/item-categories.html', label: 'Item Categories' },
     { href: '/pages/units.html', label: 'Units of Measure' },
     { href: '/pages/warehouses.html', label: 'Warehouses' },
+    { href: '/pages/stock-adjustments.html', label: 'Stock Adjustments' },
+    { href: '/pages/stock-transfers.html', label: 'Stock Transfers' },
+    { href: '/pages/stock-valuation.html', label: 'Stock Valuation' },
   ] },
   { section: 'Sales', items: [
     { href: '/pages/invoices.html', label: 'Invoices' },

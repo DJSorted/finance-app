@@ -266,3 +266,16 @@ table.grid tr.clickable { cursor: pointer; }
 .doc-lines th.c-net { width: 12%; }
 .doc-lines th.c-del { width: 5%; }
 .doc-lines select { text-overflow: ellipsis; }
+
+/* Stock document lines */
+.lines-table.stock-lines { width: 100%; min-width: 760px; table-layout: fixed; }
+.stock-lines th.c-sitem { width: 36%; }
+.stock-lines th.c-onhand { width: 12%; text-align: right; }
+.stock-lines th.c-sqty { width: 14%; }
+.stock-lines th.c-scost { width: 16%; }
+.stock-lines th.c-sval { width: 16%; text-align: right; }
+.stock-lines th.c-sdel { width: 6%; }
+.stock-lines td { overflow: hidden; }
+.stock-lines td.num { text-align: right; white-space: nowrap; }
+.stock-lines select, .stock-lines input { min-width: 0; }
+.stock-lines input[type=number] { text-align: right; }
