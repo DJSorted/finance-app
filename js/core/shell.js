@@ -41,6 +41,8 @@ const NAV = [
     { href: '/pages/customers.html', label: 'Customers' },
   ] },
   { section: 'Purchases', items: [
+    { href: '/pages/purchase-orders.html', label: 'Purchase Orders' },
+    { href: '/pages/goods-received.html', label: 'Goods Received' },
     { href: '/pages/bills.html', label: 'Bills' },
     { href: '/pages/supplier-credit-notes.html', label: 'Supplier Credit Notes' },
     { href: '/pages/payments.html', label: 'Supplier Payments' },

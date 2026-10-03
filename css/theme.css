@@ -279,3 +279,23 @@ table.grid tr.clickable { cursor: pointer; }
 .stock-lines td.num { text-align: right; white-space: nowrap; }
 .stock-lines select, .stock-lines input { min-width: 0; }
 .stock-lines input[type=number] { text-align: right; }
+
+/* Purchase order and goods received lines */
+.lines-table.po-lines { width: 100%; min-width: 820px; table-layout: fixed; }
+.po-lines th.c-pitem { width: 30%; }
+.po-lines th.c-pdesc { width: 26%; }
+.po-lines th.c-pqty { width: 11%; }
+.po-lines th.c-pprice { width: 14%; }
+.po-lines th.c-ptotal { width: 13%; text-align: right; }
+.po-lines th.c-pdel { width: 6%; }
+.lines-table.grn-lines { width: 100%; min-width: 860px; table-layout: fixed; }
+.grn-lines th.c-gitem { width: 32%; }
+.grn-lines th.c-gord, .grn-lines th.c-gout { width: 11%; text-align: right; }
+.grn-lines th.c-gqty { width: 13%; }
+.grn-lines th.c-gprice { width: 14%; }
+.grn-lines th.c-gval { width: 13%; text-align: right; }
+.grn-lines th.c-gdel { width: 6%; }
+.po-lines td, .grn-lines td { overflow: hidden; }
+.po-lines td.num, .grn-lines td.num { text-align: right; white-space: nowrap; }
+.po-lines select, .po-lines input, .grn-lines select, .grn-lines input { min-width: 0; }
+.po-lines input[type=number], .grn-lines input[type=number] { text-align: right; }

@@ -37,16 +37,20 @@ async function main() {
     <select id="${f.key}"${ctx.canEdit ? '' : ' disabled'}>
       <option value="">Not set</option>${f.options.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('')}
     </select>${f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ''}</div>`).join('');
+  const receiving = `<div class="field check"><input id="require_po_for_receiving" type="checkbox"${ctx.canEdit ? '' : ' disabled'}>
+    <label for="require_po_for_receiving">Goods can only be received against an approved purchase order</label></div>`;
   const panel = document.getElementById('panel');
-  panel.innerHTML = `<div class="card" style="max-width:640px">${body}
+  panel.innerHTML = `<div class="card" style="max-width:640px">${body}${receiving}
     ${ctx.canEdit ? '<button class="btn btn-primary" id="save" type="button">Save</button>' : ''}</div>`;
   fields.forEach((f) => { document.getElementById(f.key).value = s.data[f.key] || ''; });
+  document.getElementById('require_po_for_receiving').checked = !!s.data.require_po_for_receiving;
 
   const save = document.getElementById('save');
   if (save) {
     save.addEventListener('click', async () => {
       save.disabled = true;
       const payload = Object.fromEntries(fields.map((f) => [f.key, document.getElementById(f.key).value || null]));
+      payload.require_po_for_receiving = document.getElementById('require_po_for_receiving').checked;
       const { error } = await supabase.from('company_settings').update(payload).eq('company_id', cid);
       save.disabled = false;
       if (error) return ui.errorFrom(error);
