@@ -32,6 +32,11 @@ const NAV = [
     { href: '/pages/stock-transfers.html', label: 'Stock Transfers' },
     { href: '/pages/stock-valuation.html', label: 'Stock Valuation' },
   ] },
+    { section: 'Fixed Assets', items: [
+    { href: '/pages/fixed-assets.html', label: 'Asset Register' },
+    { href: '/pages/depreciation.html', label: 'Depreciation' },
+    { href: '/pages/asset-categories.html', label: 'Asset Categories' },
+  ] },
   { section: 'Sales', items: [
     { href: '/pages/invoices.html', label: 'Invoices' },
     { href: '/pages/credit-notes.html', label: 'Credit Notes' },

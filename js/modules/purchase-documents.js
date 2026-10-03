@@ -23,6 +23,7 @@ let terms = [];
 let taxes = [];
 let items = [];
 let accounts = [];
+let assetCats = [];
 let base = '';
 let statusFilter = 'all';
 let needle = '';
@@ -64,7 +65,7 @@ function calcDue(termsId, dateStr) {
 
 async function load() {
   const cid = ctx.companyId;
-  const [d, s, cu, t, tx, it, a] = await Promise.all([
+  const [d, s, cu, t, tx, it, a, ac] = await Promise.all([
     supabase.from('purchase_documents').select('*, suppliers(code, name)').eq('company_id', cid).eq('doc_type', TYPE)
       .order('doc_date', { ascending: false }).order('created_at', { ascending: false }).limit(300),
     supabase.from('suppliers').select('id, code, name').eq('company_id', cid).eq('is_active', true).order('code'),
@@ -75,8 +76,9 @@ async function load() {
       .eq('company_id', cid).eq('is_active', true).eq('item_type', 'service').order('code'),
     supabase.from('gl_accounts').select('id, code, name').eq('company_id', cid)
       .eq('is_posting', true).eq('is_active', true).is('control_type', null).order('code'),
+    supabase.from('asset_categories').select('id, code, name').eq('company_id', cid).eq('is_active', true).order('code'),
   ]);
-  for (const r of [d, s, cu, t, tx, it, a]) if (r.error) throw r.error;
+  for (const r of [d, s, cu, t, tx, it, a, ac]) if (r.error) throw r.error;
   docs = d.data;
   suppliers = s.data;
   currencies = cu.data;
@@ -84,6 +86,7 @@ async function load() {
   taxes = tx.data.filter((x) => x.applies_to === 'purchases' || x.applies_to === 'both');
   items = it.data.filter((x) => x.item_categories && x.item_categories.is_purchasable);
   accounts = a.data;
+  assetCats = ac.data;
   base = (currencies.find((x) => x.is_base) || {}).code || '';
 }
 
@@ -185,6 +188,7 @@ async function openEditor(existing) {
     seed = data.map((l) => ({
       item_id: l.item_id || '', description: l.description, quantity: Number(l.quantity), unit_price: Number(l.unit_price),
       tax_code_id: l.tax_code_id || '', account_id: l.account_id || '', receipt_line_id: l.receipt_line_id || '',
+      asset_category_id: l.asset_category_id || '',
     }));
   }
   if (!seed.length) seed.push({});
@@ -291,7 +295,13 @@ async function openEditor(existing) {
     } else {
       option(itemSel, '', 'Free text line');
       items.forEach((i) => option(itemSel, i.id, `${i.code} - ${i.name}`));
-      itemSel.value = s.item_id || '';
+      if (TYPE === 'bill' && assetCats.length) {
+        const og = el('optgroup');
+        og.label = 'Fixed assets';
+        assetCats.forEach((c) => { const o = el('option', '', `Asset: ${c.name}`); o.value = `asset:${c.id}`; og.append(o); });
+        itemSel.append(og);
+      }
+      itemSel.value = s.asset_category_id ? `asset:${s.asset_category_id}` : (s.item_id || '');
     }
     const desc = el('input'); desc.value = s.description || (info ? info.items.name : '');
     const remaining = info ? roundTo(Number(info.qty) - Number(info.qty_billed), 4) : null;
@@ -324,13 +334,18 @@ async function openEditor(existing) {
     tbody.append(tr);
 
     const row = { tr, itemSel, desc, qty, price, taxSel, accSel, netCell, rcl: info ? s.receipt_line_id : null, itemId: info ? info.item_id : null };
-    const syncAcc = () => { if (!info) accSel.options[0].text = itemSel.value ? 'Item category account' : 'Select account'; };
+    const syncAcc = () => {
+      if (info) return;
+      accSel.options[0].text = itemSel.value.startsWith('asset:') ? 'Asset category account'
+        : (itemSel.value ? 'Item category account' : 'Select account');
+    };
     syncAcc();
 
     if (!info) {
       itemSel.addEventListener('change', () => {
         syncAcc();
         const it = items.find((x) => x.id === itemSel.value);
+        if (itemSel.value.startsWith('asset:')) accSel.value = '';
         if (it) {
           if (!desc.value.trim()) desc.value = it.name;
           taxSel.value = it.purchase_tax_code_id || (it.item_categories && it.item_categories.purchase_tax_code_id)
@@ -492,13 +507,20 @@ async function openEditor(existing) {
           unit_price: Number(r.price.value), tax_code_id: r.taxSel.value || null, account_id: null,
         };
       }
+      const isAsset = r.itemSel.value.startsWith('asset:');
       if (!r.itemSel.value && !r.accSel.value) throw new Error(`Line ${n}: choose an item or an account.`);
-      if (!r.itemSel.value && !r.desc.value.trim()) throw new Error(`Line ${n}: enter a description.`);
+      if ((!r.itemSel.value || isAsset) && !r.desc.value.trim()) {
+        throw new Error(`Line ${n}: enter a description${isAsset ? ' (the asset name)' : ''}.`);
+      }
       if (!(Number(r.qty.value) > 0)) throw new Error(`Line ${n}: enter a quantity above zero.`);
       if (r.price.value === '' || Number(r.price.value) < 0) throw new Error(`Line ${n}: enter a price.`);
+      if (isAsset && !(Number(r.price.value) > 0)) throw new Error(`Line ${n}: enter the cost of the asset.`);
       return {
-        item_id: r.itemSel.value || null, description: r.desc.value.trim(), quantity: Number(r.qty.value),
-        unit_price: Number(r.price.value), tax_code_id: r.taxSel.value || null, account_id: r.accSel.value || null,
+        item_id: r.itemSel.value && !isAsset ? r.itemSel.value : null,
+        asset_category_id: isAsset ? r.itemSel.value.slice(6) : null,
+        description: r.desc.value.trim(), quantity: Number(r.qty.value),
+        unit_price: Number(r.price.value), tax_code_id: r.taxSel.value || null,
+        account_id: isAsset ? null : (r.accSel.value || null),
       };
     });
   }
@@ -566,7 +588,7 @@ async function openViewer(d) {
   node.append(info);
 
   const body = l.data.map((x, i) => `<tr><td>${i + 1}</td><td>${esc(x.items ? x.items.code : '')}</td>
-    <td>${esc(x.description)}${x.receipt_line_id ? ' <span class="badge">Goods received</span>' : ''}</td>
+    ${esc(x.description)}${x.receipt_line_id ? ' <span class="badge">Goods received</span>' : ''}${x.asset_category_id ? ' <span class="badge">Fixed asset</span>' : ''}
     <td class="num">${money(x.quantity, 2)}</td><td class="num">${money(x.unit_price, dec)}</td>
     <td class="num">${Number(x.tax_rate)}%</td><td class="num">${money(x.net_amount, dec)}</td><td class="num">${money(x.tax_amount, dec)}</td></tr>`).join('');
   const wrapT = el('div', 'table-wrap');
