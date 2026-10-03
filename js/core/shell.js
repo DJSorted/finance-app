@@ -6,7 +6,7 @@ import { logoUrl } from './logo.js';
 // Add new pages here and they appear in the sidebar on every screen.
 const NAV = [
   { section: 'Overview', pinned: true, items: [{ href: '/', label: 'Home' }] },
-    { section: 'Accounting', items: [
+  { section: 'Accounting', items: [
     { href: '/pages/journals.html', label: 'Journals' },
     { href: '/pages/trial-balance.html', label: 'Trial Balance' },
   ] },

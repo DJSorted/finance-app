@@ -35,6 +35,7 @@ function el(tag, cls, text) {
 }
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const money = (n, d = 2) => Number(n).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+const qtyFmt = (n) => Number(n).toLocaleString(undefined, { maximumFractionDigits: 4 });
 const roundTo = (n, d) => { const f = 10 ** d; return Math.round((n + Number.EPSILON) * f) / f; };
 const todayIso = () => new Date().toISOString().slice(0, 10);
 const decOf = (code) => { const c = currencies.find((x) => x.code === code); return c && c.currencies ? c.currencies.decimals : 2; };
@@ -101,7 +102,7 @@ async function supplierDefaults(id) {
 
 function render() {
   hint.textContent = `${LABEL}s post to the ledger when you post them. Posted documents are locked`
-    + (TYPE === 'bill' ? ': correct them with a supplier credit note.' : '.');
+    + (TYPE === 'bill' ? ': correct them with a supplier credit note. Stock items are billed by matching them to goods received.' : '.');
   toolbar.replaceChildren();
   if (CAN_DRAFT) toolbar.append(btn(`New ${LABEL.toLowerCase()}`, 'btn-primary', () => openEditor(null)));
   const box = el('input');
@@ -170,12 +171,20 @@ async function doExport() {
 async function openEditor(existing) {
   let docId = existing ? existing.id : null;
   let seed = [];
+  const rlInfo = new Map();
   if (existing) {
     const { data, error } = await supabase.from('purchase_document_lines').select('*').eq('document_id', existing.id).order('line_no');
     if (error) return ui.errorFrom(error, 'Could not load the document lines.');
+    const ids = data.map((l) => l.receipt_line_id).filter(Boolean);
+    if (ids.length) {
+      const rl = await supabase.from('goods_receipt_lines')
+        .select('id, qty, qty_billed, unit_price, item_id, items(code, name), goods_receipts(grn_no, currency_code)').in('id', ids);
+      if (rl.error) return ui.errorFrom(rl.error, 'Could not load the goods received lines.');
+      rl.data.forEach((x) => rlInfo.set(x.id, x));
+    }
     seed = data.map((l) => ({
       item_id: l.item_id || '', description: l.description, quantity: Number(l.quantity), unit_price: Number(l.unit_price),
-      tax_code_id: l.tax_code_id || '', account_id: l.account_id || '',
+      tax_code_id: l.tax_code_id || '', account_id: l.account_id || '', receipt_line_id: l.receipt_line_id || '',
     }));
   }
   if (!seed.length) seed.push({});
@@ -273,22 +282,36 @@ async function openEditor(existing) {
   }
 
   function addRow(s) {
+    const info = s.receipt_line_id ? rlInfo.get(s.receipt_line_id) : null;
     const tr = el('tr');
     const itemSel = el('select');
-    option(itemSel, '', 'Free text line');
-    items.forEach((i) => option(itemSel, i.id, `${i.code} - ${i.name}`));
-    itemSel.value = s.item_id || '';
-    const desc = el('input'); desc.value = s.description || '';
+    if (info) {
+      option(itemSel, info.item_id, `${info.items.code} - ${info.items.name} (${info.goods_receipts.grn_no})`);
+      itemSel.disabled = true;
+    } else {
+      option(itemSel, '', 'Free text line');
+      items.forEach((i) => option(itemSel, i.id, `${i.code} - ${i.name}`));
+      itemSel.value = s.item_id || '';
+    }
+    const desc = el('input'); desc.value = s.description || (info ? info.items.name : '');
+    const remaining = info ? roundTo(Number(info.qty) - Number(info.qty_billed), 4) : null;
     const qty = el('input'); qty.type = 'number'; qty.step = 'any'; qty.min = '0'; qty.value = s.quantity ?? 1;
+    if (info) qty.max = String(remaining);
     const price = el('input'); price.type = 'number'; price.step = 'any'; price.min = '0'; price.value = s.unit_price ?? '';
+    if (info) price.placeholder = `receipt ${money(info.unit_price, 4)}`;
     const taxSel = el('select');
     option(taxSel, '', 'No tax');
     taxes.forEach((t) => option(taxSel, t.id, `${t.code} (${Number(t.rate)}%)`));
-    taxSel.value = s.tax_code_id || (existing ? '' : ((supDef && supDef.tax_code_id) || ''));
+    taxSel.value = s.tax_code_id || (existing || info ? '' : ((supDef && supDef.tax_code_id) || ''));
     const accSel = el('select');
-    option(accSel, '', '');
-    accounts.forEach((a) => option(accSel, a.id, `${a.code} - ${a.name}`));
-    accSel.value = s.account_id || '';
+    if (info) {
+      option(accSel, '', 'Goods received not invoiced');
+      accSel.disabled = true;
+    } else {
+      option(accSel, '', '');
+      accounts.forEach((a) => option(accSel, a.id, `${a.code} - ${a.name}`));
+      accSel.value = s.account_id || '';
+    }
     const netCell = el('td', 'num');
     const del = el('button', 'btn btn-sm btn-ghost', '✕');
     del.type = 'button';
@@ -300,22 +323,28 @@ async function openEditor(existing) {
     tr.append(netCell, delTd);
     tbody.append(tr);
 
-    const row = { tr, itemSel, desc, qty, price, taxSel, accSel, netCell };
-    const syncAcc = () => { accSel.options[0].text = itemSel.value ? 'Item category account' : 'Select account'; };
+    const row = { tr, itemSel, desc, qty, price, taxSel, accSel, netCell, rcl: info ? s.receipt_line_id : null, itemId: info ? info.item_id : null };
+    const syncAcc = () => { if (!info) accSel.options[0].text = itemSel.value ? 'Item category account' : 'Select account'; };
     syncAcc();
 
-    itemSel.addEventListener('change', () => {
-      syncAcc();
-      const it = items.find((x) => x.id === itemSel.value);
-      if (it) {
-        if (!desc.value.trim()) desc.value = it.name;
-        taxSel.value = it.purchase_tax_code_id || (it.item_categories && it.item_categories.purchase_tax_code_id)
-          || (supDef && supDef.tax_code_id) || '';
-        accSel.value = '';
-      }
+    if (!info) {
+      itemSel.addEventListener('change', () => {
+        syncAcc();
+        const it = items.find((x) => x.id === itemSel.value);
+        if (it) {
+          if (!desc.value.trim()) desc.value = it.name;
+          taxSel.value = it.purchase_tax_code_id || (it.item_categories && it.item_categories.purchase_tax_code_id)
+            || (supDef && supDef.tax_code_id) || '';
+          accSel.value = '';
+        }
+        recalc();
+      });
+    }
+    qty.addEventListener('input', () => {
+      if (info && Number(qty.value) > remaining) qty.value = String(remaining);
       recalc();
     });
-    [qty, price, taxSel].forEach((x) => x.addEventListener('input', recalc));
+    price.addEventListener('input', recalc);
     taxSel.addEventListener('change', recalc);
     del.addEventListener('click', () => {
       if (rows.length === 1) return ui.warn('A document needs at least one line.');
@@ -328,7 +357,73 @@ async function openEditor(existing) {
 
   seed.forEach(addRow);
 
+  function dropLinked() {
+    const stale = rows.filter((r) => r.rcl);
+    if (!stale.length) return;
+    stale.forEach((r) => { r.tr.remove(); rows.splice(rows.indexOf(r), 1); });
+    if (!rows.length) addRow({});
+    ui.warn('Goods received lines were removed because the supplier or currency changed.');
+  }
+
+  async function pickReceipts() {
+    if (!supSel.value) return ui.warn('Choose a supplier first.');
+    const { data, error } = await supabase.from('goods_receipt_lines')
+      .select('id, line_no, qty, qty_billed, unit_price, item_id, items(code, name, purchase_tax_code_id, item_categories(purchase_tax_code_id)), goods_receipts!inner(grn_no, receipt_date, currency_code, supplier_id)')
+      .eq('company_id', ctx.companyId).eq('goods_receipts.supplier_id', supSel.value);
+    if (error) return ui.errorFrom(error, 'Could not load goods received.');
+    const used = new Set(rows.filter((r) => r.rcl).map((r) => r.rcl));
+    const list = data
+      .filter((l) => Number(l.qty) > Number(l.qty_billed) && l.goods_receipts.currency_code === curSel.value && !used.has(l.id))
+      .sort((a, b) => a.goods_receipts.receipt_date.localeCompare(b.goods_receipts.receipt_date)
+        || a.goods_receipts.grn_no.localeCompare(b.goods_receipts.grn_no));
+    if (!list.length) return ui.warn(`Nothing received from this supplier in ${curSel.value} is waiting to be billed.`);
+
+    const node = el('div');
+    const wrapT = el('div', 'table-wrap');
+    const t = el('table', 'grid');
+    t.innerHTML = '<thead><tr><th></th><th>Goods received</th><th>Date</th><th>Item</th>'
+      + '<th style="text-align:right">To bill</th><th style="text-align:right">Receipt price</th></tr></thead>';
+    const tb = el('tbody');
+    const checks = [];
+    list.forEach((l) => {
+      const tr2 = el('tr');
+      const cb = el('input');
+      cb.type = 'checkbox';
+      cb.style.width = 'auto';
+      const c0 = el('td');
+      c0.append(cb);
+      tr2.append(c0, el('td', '', l.goods_receipts.grn_no), el('td', '', l.goods_receipts.receipt_date),
+        el('td', '', `${l.items.code} - ${l.items.name}`),
+        el('td', 'num', qtyFmt(Number(l.qty) - Number(l.qty_billed))), el('td', 'num', money(l.unit_price, 4)));
+      tb.append(tr2);
+      checks.push({ cb, l });
+    });
+    t.append(tb);
+    wrapT.append(t);
+    node.append(wrapT);
+    const res = await ui.dialog({
+      title: 'Add from goods received', node, wide: true, dismissValue: 'close',
+      buttons: [{ label: 'Cancel', value: 'close', className: 'btn-ghost' }, { label: 'Add selected', value: 'add', className: 'btn-primary' }],
+    });
+    if (res !== 'add') return;
+    const chosen = checks.filter((c) => c.cb.checked).map((c) => c.l);
+    if (!chosen.length) return;
+
+    rows.filter((r) => !r.rcl && !r.itemSel.value && !r.accSel.value && !r.desc.value.trim() && r.price.value === '')
+      .forEach((r) => { r.tr.remove(); rows.splice(rows.indexOf(r), 1); });
+    chosen.forEach((l) => {
+      rlInfo.set(l.id, l);
+      addRow({
+        receipt_line_id: l.id, quantity: roundTo(Number(l.qty) - Number(l.qty_billed), 4), unit_price: Number(l.unit_price),
+        tax_code_id: l.items.purchase_tax_code_id || (l.items.item_categories && l.items.item_categories.purchase_tax_code_id)
+          || (supDef && supDef.tax_code_id) || '',
+      });
+    });
+    recalc();
+  }
+
   supSel.addEventListener('change', async () => {
+    dropLinked();
     supDef = await supplierDefaults(supSel.value);
     if (!supDef) return;
     if (currencies.some((c) => c.code === supDef.currency_code)) curSel.value = supDef.currency_code;
@@ -340,13 +435,17 @@ async function openEditor(existing) {
     syncDue();
     recalc();
   });
-  curSel.addEventListener('change', () => { rateManual = false; rateIn.value = ''; syncRate(); recalc(); });
+  curSel.addEventListener('change', () => { dropLinked(); rateManual = false; rateIn.value = ''; syncRate(); recalc(); });
   dateIn.addEventListener('change', () => { syncDue(); syncRate(); });
   termSel.addEventListener('change', () => { dueManual = false; syncDue(); });
   dueIn.addEventListener('input', () => { dueManual = true; });
   rateIn.addEventListener('input', () => { rateManual = true; });
 
-  box.append(btn('Add line', '', () => { addRow({}); recalc(); }), totals);
+  const lineButtons = el('div');
+  lineButtons.style.cssText = 'display:flex;gap:.5rem;flex-wrap:wrap';
+  lineButtons.append(btn('Add line', '', () => { addRow({}); recalc(); }));
+  if (TYPE === 'bill') lineButtons.append(btn('Add from goods received', '', pickReceipts));
+  box.append(lineButtons, totals);
   syncRate();
   if (!existing) syncDue();
   recalc();
@@ -385,6 +484,14 @@ async function openEditor(existing) {
     if (!dateIn.value) throw new Error('Enter the date.');
     return rows.map((r, i) => {
       const n = i + 1;
+      if (r.rcl) {
+        if (!(Number(r.qty.value) > 0)) throw new Error(`Line ${n}: enter a quantity above zero.`);
+        if (r.price.value === '' || Number(r.price.value) < 0) throw new Error(`Line ${n}: enter the price on the supplier's bill.`);
+        return {
+          receipt_line_id: r.rcl, item_id: r.itemId, description: r.desc.value.trim(), quantity: Number(r.qty.value),
+          unit_price: Number(r.price.value), tax_code_id: r.taxSel.value || null, account_id: null,
+        };
+      }
       if (!r.itemSel.value && !r.accSel.value) throw new Error(`Line ${n}: choose an item or an account.`);
       if (!r.itemSel.value && !r.desc.value.trim()) throw new Error(`Line ${n}: enter a description.`);
       if (!(Number(r.qty.value) > 0)) throw new Error(`Line ${n}: enter a quantity above zero.`);
@@ -458,7 +565,8 @@ async function openViewer(d) {
   info.style.whiteSpace = 'pre-line';
   node.append(info);
 
-  const body = l.data.map((x, i) => `<tr><td>${i + 1}</td><td>${esc(x.items ? x.items.code : '')}</td><td>${esc(x.description)}</td>
+  const body = l.data.map((x, i) => `<tr><td>${i + 1}</td><td>${esc(x.items ? x.items.code : '')}</td>
+    <td>${esc(x.description)}${x.receipt_line_id ? ' <span class="badge">Goods received</span>' : ''}</td>
     <td class="num">${money(x.quantity, 2)}</td><td class="num">${money(x.unit_price, dec)}</td>
     <td class="num">${Number(x.tax_rate)}%</td><td class="num">${money(x.net_amount, dec)}</td><td class="num">${money(x.tax_amount, dec)}</td></tr>`).join('');
   const wrapT = el('div', 'table-wrap');
