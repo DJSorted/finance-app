@@ -299,3 +299,7 @@ table.grid tr.clickable { cursor: pointer; }
 .po-lines td.num, .grn-lines td.num { text-align: right; white-space: nowrap; }
 .po-lines select, .po-lines input, .grn-lines select, .grn-lines input { min-width: 0; }
 .po-lines input[type=number], .grn-lines input[type=number] { text-align: right; }
+
+/* On-hand column in the sales line table */
+.doc-lines th.c-onh { width: 8%; text-align: right; }
+.doc-lines td.onh { text-align: right; white-space: nowrap; color: var(--text-dim); font-size: 13px; }

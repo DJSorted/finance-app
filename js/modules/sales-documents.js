@@ -22,7 +22,9 @@ let currencies = [];
 let terms = [];
 let taxes = [];
 let items = [];
+let itemMap = new Map();
 let accounts = [];
+let warehouses = [];
 let base = '';
 let statusFilter = 'all';
 let needle = '';
@@ -35,6 +37,7 @@ function el(tag, cls, text) {
 }
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const money = (n, d = 2) => Number(n).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+const qtyFmt = (n) => Number(n).toLocaleString(undefined, { maximumFractionDigits: 4 });
 const roundTo = (n, d) => { const f = 10 ** d; return Math.round((n + Number.EPSILON) * f) / f; };
 const todayIso = () => new Date().toISOString().slice(0, 10);
 const decOf = (code) => { const c = currencies.find((x) => x.code === code); return c && c.currencies ? c.currencies.decimals : 2; };
@@ -63,26 +66,31 @@ function calcDue(termsId, dateStr) {
 
 async function load() {
   const cid = ctx.companyId;
-  const [d, c, cu, t, tx, it, a] = await Promise.all([
+  const [d, c, cu, t, tx, it, a, w] = await Promise.all([
     supabase.from('sales_documents').select('*, customers(code, name)').eq('company_id', cid).eq('doc_type', TYPE)
       .order('doc_date', { ascending: false }).order('created_at', { ascending: false }).limit(300),
     supabase.from('customers').select('id, code, name').eq('company_id', cid).eq('is_active', true).order('code'),
     supabase.from('company_currencies').select('code, is_base, currencies(decimals)').eq('company_id', cid).order('code'),
     supabase.from('payment_terms').select('id, code, name, basis, days').eq('company_id', cid).eq('is_active', true).order('code'),
     supabase.from('tax_codes').select('id, code, name, rate, applies_to').eq('company_id', cid).eq('is_active', true).order('code'),
-    supabase.from('items').select('id, code, name, sales_price, sales_price_currency, sales_tax_code_id, item_categories(is_sellable, sales_tax_code_id)')
-      .eq('company_id', cid).eq('is_active', true).eq('item_type', 'service').order('code'),
+    supabase.from('items').select('id, code, name, item_type, sales_price, sales_price_currency, sales_tax_code_id, item_categories(is_sellable, sales_tax_code_id)')
+      .eq('company_id', cid).eq('is_active', true).order('code'),
     supabase.from('gl_accounts').select('id, code, name, account_groups(class_type)')
       .eq('company_id', cid).eq('is_posting', true).eq('is_active', true).is('control_type', null).order('code'),
+    supabase.from('warehouses').select('id, code, name, is_default, allow_negative_stock')
+      .eq('company_id', cid).eq('is_active', true).order('code'),
   ]);
-  for (const r of [d, c, cu, t, tx, it, a]) if (r.error) throw r.error;
+  for (const r of [d, c, cu, t, tx, it, a, w]) if (r.error) throw r.error;
   docs = d.data;
   customers = c.data;
   currencies = cu.data;
   terms = t.data;
   taxes = tx.data.filter((x) => x.applies_to === 'sales' || x.applies_to === 'both');
-  items = it.data.filter((x) => x.item_categories && x.item_categories.is_sellable);
+  const sellable = it.data.filter((x) => x.item_categories && x.item_categories.is_sellable);
+  itemMap = new Map(sellable.map((x) => [x.id, x]));
+  items = TYPE === 'credit_note' ? sellable.filter((x) => x.item_type === 'service') : sellable;
   accounts = a.data.filter((x) => x.account_groups && x.account_groups.class_type === 'income_statement');
+  warehouses = w.data;
   base = (currencies.find((x) => x.is_base) || {}).code || '';
 }
 
@@ -101,7 +109,9 @@ async function customerDefaults(id) {
 
 function render() {
   hint.textContent = `${LABEL}s post to the ledger when you post them. Posted documents are locked`
-    + (TYPE === 'invoice' ? ': correct them with a credit note.' : '.');
+    + (TYPE === 'invoice'
+      ? ': correct them with a credit note. Stock items go out of the chosen warehouse at average cost.'
+      : '. Stock items are credited from the original invoice line, and go back into stock at the cost they were sold at.');
   toolbar.replaceChildren();
   if (CAN_DRAFT) toolbar.append(btn(`New ${LABEL.toLowerCase()}`, 'btn-primary', () => openEditor(null)));
   const box = el('input');
@@ -168,16 +178,28 @@ async function doExport() {
 async function openEditor(existing) {
   let docId = existing ? existing.id : null;
   let seed = [];
+  const srcInfo = new Map();
   if (existing) {
     const { data, error } = await supabase.from('sales_document_lines').select('*').eq('document_id', existing.id).order('line_no');
     if (error) return ui.errorFrom(error, 'Could not load the document lines.');
+    const ids = data.map((l) => l.source_line_id).filter(Boolean);
+    if (ids.length) {
+      const s = await supabase.from('sales_document_lines')
+        .select('id, quantity, qty_credited, unit_price, items(code, name), sales_documents(doc_no)').in('id', ids);
+      if (s.error) return ui.errorFrom(s.error, 'Could not load the invoice lines.');
+      s.data.forEach((x) => srcInfo.set(x.id, x));
+    }
     seed = data.map((l) => ({
       item_id: l.item_id || '', description: l.description, quantity: Number(l.quantity), unit_price: Number(l.unit_price),
-      tax_code_id: l.tax_code_id || '', account_id: l.account_id || '',
+      tax_code_id: l.tax_code_id || '', account_id: l.account_id || '', source_line_id: l.source_line_id || '',
     }));
   }
   if (!seed.length) seed.push({});
   let custDef = existing ? await customerDefaults(existing.customer_id) : null;
+
+  const bal = new Map();
+  const bq = await supabase.from('stock_balances').select('item_id, warehouse_id, qty_on_hand').eq('company_id', ctx.companyId);
+  if (!bq.error) bq.data.forEach((b) => bal.set(`${b.item_id}|${b.warehouse_id}`, Number(b.qty_on_hand)));
 
   const prevFocus = document.activeElement;
   const backdrop = el('div', 'modal-backdrop');
@@ -206,6 +228,10 @@ async function openEditor(existing) {
   const dueIn = el('input'); dueIn.type = 'date'; dueIn.value = existing ? existing.due_date : '';
   const refIn = el('input'); refIn.value = existing ? (existing.reference || '') : '';
   const rateIn = el('input'); rateIn.type = 'number'; rateIn.step = 'any';
+  const whSel = el('select');
+  warehouses.forEach((w) => option(whSel, w.id, `${w.code} - ${w.name}`));
+  whSel.value = existing && existing.warehouse_id ? existing.warehouse_id
+    : ((warehouses.find((w) => w.is_default) || warehouses[0] || {}).id || '');
   const notesIn = el('input'); notesIn.value = existing ? (existing.notes || '') : '';
 
   let dueManual = !!existing;
@@ -215,12 +241,14 @@ async function openEditor(existing) {
   const head = el('div', 'form-grid');
   head.append(field('Customer *', custSel, true), field('Date *', dateIn), field('Currency', curSel),
     field('Payment terms', termSel), field('Due date', dueIn), field('Reference', refIn),
-    field(CAN_RATE ? 'Exchange rate (override allowed)' : 'Exchange rate', rateIn), field('Notes', notesIn, true));
+    field(CAN_RATE ? 'Exchange rate (override allowed)' : 'Exchange rate', rateIn),
+    field(TYPE === 'invoice' ? 'Warehouse (stock leaves from)' : 'Warehouse (stock returns to)', whSel),
+    field('Notes', notesIn, true));
   box.append(head);
 
   const wrap = el('div', 'lines-wrap');
   const table = el('table', 'lines-table doc-lines');
-    table.innerHTML = '<thead><tr><th class="c-item">Item</th><th class="c-desc">Description</th>'
+  table.innerHTML = '<thead><tr><th class="c-item">Item</th><th class="c-desc">Description</th><th class="c-onh">On hand</th>'
     + '<th class="c-qty">Qty</th><th class="c-price">Price</th><th class="c-tax">Tax</th><th class="c-acc">Account</th>'
     + '<th class="c-net" style="text-align:right">Net</th><th class="c-del"></th></tr></thead>';
   const tbody = el('tbody');
@@ -242,6 +270,11 @@ async function openEditor(existing) {
       r.netCell.textContent = money(n, dec);
       net += n;
       tax += t;
+      if (r.src) r.onh.textContent = `max ${qtyFmt(r.maxQty)}`;
+      else {
+        const it = r.itemSel.value ? itemMap.get(r.itemSel.value) : null;
+        r.onh.textContent = it && it.item_type !== 'service' ? qtyFmt(bal.get(`${it.id}|${whSel.value}`) || 0) : '';
+      }
     });
     totals.innerHTML = `<span>Net: ${money(net, dec)}</span><span>Tax: ${money(tax, dec)}</span>`
       + `<span class="ok">Total (${esc(curSel.value)}): ${money(net + tax, dec)}</span>`;
@@ -268,51 +301,77 @@ async function openEditor(existing) {
   }
 
   function addRow(s) {
+    const info = s.source_line_id ? srcInfo.get(s.source_line_id) : null;
     const tr = el('tr');
     const itemSel = el('select');
-    option(itemSel, '', 'Free text line');
-    items.forEach((i) => option(itemSel, i.id, `${i.code} - ${i.name}`));
-    itemSel.value = s.item_id || '';
+    if (info) {
+      option(itemSel, s.item_id, `${info.items.code} - ${info.items.name} (${info.sales_documents.doc_no})`);
+      itemSel.disabled = true;
+    } else {
+      option(itemSel, '', 'Free text line');
+      items.forEach((i) => option(itemSel, i.id, `${i.code} - ${i.name}${i.item_type === 'service' ? '' : ' (stock)'}`));
+      itemSel.value = s.item_id || '';
+    }
     const desc = el('input'); desc.value = s.description || '';
+    const onh = el('td', 'onh');
+    const maxQty = info ? roundTo(Number(info.quantity) - Number(info.qty_credited), 4) : null;
     const qty = el('input'); qty.type = 'number'; qty.step = 'any'; qty.min = '0'; qty.value = s.quantity ?? 1;
+    if (info) qty.max = String(maxQty);
     const price = el('input'); price.type = 'number'; price.step = 'any'; price.min = '0'; price.value = s.unit_price ?? '';
     const taxSel = el('select');
     option(taxSel, '', 'No tax');
     taxes.forEach((t) => option(taxSel, t.id, `${t.code} (${Number(t.rate)}%)`));
-    taxSel.value = s.tax_code_id || (existing ? '' : ((custDef && custDef.tax_code_id) || ''));
+    taxSel.value = s.tax_code_id || (existing || info ? '' : ((custDef && custDef.tax_code_id) || ''));
     const accSel = el('select');
-    option(accSel, '', '');
-    accounts.forEach((a) => option(accSel, a.id, `${a.code} - ${a.name}`));
-    accSel.value = s.account_id || '';
+    if (info) {
+      option(accSel, '', 'Item category account');
+      accSel.disabled = true;
+    } else {
+      option(accSel, '', '');
+      accounts.forEach((a) => option(accSel, a.id, `${a.code} - ${a.name}`));
+      accSel.value = s.account_id || '';
+    }
     const netCell = el('td', 'num');
     const del = el('button', 'btn btn-sm btn-ghost', '✕');
     del.type = 'button';
     del.title = 'Remove line';
 
-    [itemSel, desc, qty, price, taxSel, accSel].forEach((x) => { const td = el('td'); td.append(x); tr.append(td); });
-    const delTd = el('td');
-    delTd.append(del);
-    tr.append(netCell, delTd);
+    const td = (x) => { const c = el('td'); c.append(x); return c; };
+    const dtd = el('td');
+    dtd.append(del);
+    tr.append(td(itemSel), td(desc), onh, td(qty), td(price), td(taxSel), td(accSel), netCell, dtd);
     tbody.append(tr);
 
-    const row = { tr, itemSel, desc, qty, price, taxSel, accSel, netCell };
-    const syncAcc = () => { accSel.options[0].text = itemSel.value ? 'Item category account' : 'Select account'; };
+    const row = {
+      tr, itemSel, desc, onh, qty, price, taxSel, accSel, netCell,
+      src: info ? s.source_line_id : null, itemId: info ? s.item_id : null, maxQty,
+    };
+    const syncAcc = () => {
+      if (info) return;
+      accSel.options[0].text = itemSel.value ? 'Item category account' : 'Select account';
+    };
     syncAcc();
 
-    itemSel.addEventListener('change', () => {
-      syncAcc();
-      const it = items.find((x) => x.id === itemSel.value);
-      if (it) {
-        if (!desc.value.trim()) desc.value = it.name;
-        const itemCur = it.sales_price_currency || base;
-        if (it.sales_price !== null && itemCur === curSel.value) price.value = String(Number(it.sales_price));
-        taxSel.value = it.sales_tax_code_id || (it.item_categories && it.item_categories.sales_tax_code_id)
-          || (custDef && custDef.tax_code_id) || '';
-        accSel.value = '';
-      }
+    if (!info) {
+      itemSel.addEventListener('change', () => {
+        syncAcc();
+        const it = itemMap.get(itemSel.value);
+        if (it) {
+          if (!desc.value.trim()) desc.value = it.name;
+          const itemCur = it.sales_price_currency || base;
+          if (it.sales_price !== null && itemCur === curSel.value) price.value = String(Number(it.sales_price));
+          taxSel.value = it.sales_tax_code_id || (it.item_categories && it.item_categories.sales_tax_code_id)
+            || (custDef && custDef.tax_code_id) || '';
+          accSel.value = '';
+        }
+        recalc();
+      });
+    }
+    qty.addEventListener('input', () => {
+      if (info && Number(qty.value) > maxQty) qty.value = String(maxQty);
       recalc();
     });
-    [qty, price, taxSel].forEach((x) => x.addEventListener('input', recalc));
+    price.addEventListener('input', recalc);
     taxSel.addEventListener('change', recalc);
     del.addEventListener('click', () => {
       if (rows.length === 1) return ui.warn('A document needs at least one line.');
@@ -325,7 +384,70 @@ async function openEditor(existing) {
 
   seed.forEach(addRow);
 
+  function dropLinked() {
+    const stale = rows.filter((r) => r.src);
+    if (!stale.length) return;
+    stale.forEach((r) => { r.tr.remove(); rows.splice(rows.indexOf(r), 1); });
+    if (!rows.length) addRow({});
+    ui.warn('Lines credited from an invoice were removed because the customer or currency changed.');
+  }
+
+  async function pickInvoiceLines() {
+    if (!custSel.value) return ui.warn('Choose a customer first.');
+    const { data, error } = await supabase.rpc('sales_creditable_lines', { p_company: ctx.companyId, p_customer: custSel.value });
+    if (error) return ui.errorFrom(error, 'Could not load the invoice lines.');
+    const used = new Set(rows.filter((r) => r.src).map((r) => r.src));
+    const list = data.filter((l) => l.currency_code === curSel.value && !used.has(l.line_id));
+    if (!list.length) return ui.warn(`No stock lines on this customer's invoices in ${curSel.value} can still be credited.`);
+
+    const node = el('div');
+    const wrapT = el('div', 'table-wrap');
+    const t = el('table', 'grid');
+    t.innerHTML = '<thead><tr><th></th><th>Invoice</th><th>Date</th><th>Item</th>'
+      + '<th style="text-align:right">Can credit</th><th style="text-align:right">Price</th></tr></thead>';
+    const tb = el('tbody');
+    const checks = [];
+    list.forEach((l) => {
+      const tr2 = el('tr');
+      const cb = el('input');
+      cb.type = 'checkbox';
+      cb.style.width = 'auto';
+      const c0 = el('td');
+      c0.append(cb);
+      tr2.append(c0, el('td', '', l.doc_no), el('td', '', l.doc_date), el('td', '', `${l.item_code} - ${l.item_name}`),
+        el('td', 'num', qtyFmt(l.qty_creditable)), el('td', 'num', money(l.unit_price, decOf(curSel.value))));
+      tb.append(tr2);
+      checks.push({ cb, l });
+    });
+    t.append(tb);
+    wrapT.append(t);
+    node.append(wrapT);
+    const res = await ui.dialog({
+      title: 'Credit from invoice', node, wide: true, dismissValue: 'close',
+      buttons: [{ label: 'Cancel', value: 'close', className: 'btn-ghost' }, { label: 'Add selected', value: 'add', className: 'btn-primary' }],
+    });
+    if (res !== 'add') return;
+    const chosen = checks.filter((c) => c.cb.checked).map((c) => c.l);
+    if (!chosen.length) return;
+
+    rows.filter((r) => !r.src && !r.itemSel.value && !r.accSel.value && !r.desc.value.trim() && r.price.value === '')
+      .forEach((r) => { r.tr.remove(); rows.splice(rows.indexOf(r), 1); });
+    chosen.forEach((l) => {
+      srcInfo.set(l.line_id, {
+        id: l.line_id, quantity: Number(l.qty_sold), qty_credited: Number(l.qty_sold) - Number(l.qty_creditable),
+        unit_price: l.unit_price, items: { code: l.item_code, name: l.item_name }, sales_documents: { doc_no: l.doc_no },
+      });
+      addRow({
+        source_line_id: l.line_id, item_id: l.item_id, description: l.description,
+        quantity: Number(l.qty_creditable), unit_price: Number(l.unit_price), tax_code_id: l.tax_code_id || '',
+      });
+    });
+    if (chosen[0].warehouse_id && warehouses.some((w) => w.id === chosen[0].warehouse_id)) whSel.value = chosen[0].warehouse_id;
+    recalc();
+  }
+
   custSel.addEventListener('change', async () => {
+    dropLinked();
     custDef = await customerDefaults(custSel.value);
     if (!custDef) return;
     if (currencies.some((c) => c.code === custDef.currency_code)) curSel.value = custDef.currency_code;
@@ -337,13 +459,18 @@ async function openEditor(existing) {
     syncDue();
     recalc();
   });
-  curSel.addEventListener('change', () => { rateManual = false; rateIn.value = ''; syncRate(); recalc(); });
+  curSel.addEventListener('change', () => { dropLinked(); rateManual = false; rateIn.value = ''; syncRate(); recalc(); });
   dateIn.addEventListener('change', () => { syncDue(); syncRate(); });
   termSel.addEventListener('change', () => { dueManual = false; syncDue(); });
   dueIn.addEventListener('input', () => { dueManual = true; });
   rateIn.addEventListener('input', () => { rateManual = true; });
+  whSel.addEventListener('change', recalc);
 
-  box.append(btn('Add line', '', () => { addRow({}); recalc(); }), totals);
+  const lineButtons = el('div');
+  lineButtons.style.cssText = 'display:flex;gap:.5rem;flex-wrap:wrap';
+  lineButtons.append(btn('Add line', '', () => { addRow({}); recalc(); }));
+  if (TYPE === 'credit_note') lineButtons.append(btn('Credit from invoice', '', pickInvoiceLines));
+  box.append(lineButtons, totals);
   syncRate();
   if (!existing) syncDue();
   recalc();
@@ -379,16 +506,37 @@ async function openEditor(existing) {
   function collect() {
     if (!custSel.value) throw new Error('Choose a customer.');
     if (!dateIn.value) throw new Error('Enter the date.');
+    const wh = warehouses.find((w) => w.id === whSel.value);
+    const need = new Map();
     const lines = rows.map((r, i) => {
       const n = i + 1;
-      if (!r.itemSel.value && !r.accSel.value) throw new Error(`Line ${n}: choose an item or an account.`);
-      if (!r.itemSel.value && !r.desc.value.trim()) throw new Error(`Line ${n}: enter a description.`);
       if (!(Number(r.qty.value) > 0)) throw new Error(`Line ${n}: enter a quantity above zero.`);
       if (r.price.value === '' || Number(r.price.value) < 0) throw new Error(`Line ${n}: enter a price.`);
+      if (r.src) {
+        return {
+          item_id: r.itemId, source_line_id: r.src, description: r.desc.value.trim(), quantity: Number(r.qty.value),
+          unit_price: Number(r.price.value), tax_code_id: r.taxSel.value || null, account_id: null,
+        };
+      }
+      if (!r.itemSel.value && !r.accSel.value) throw new Error(`Line ${n}: choose an item or an account.`);
+      if (!r.itemSel.value && !r.desc.value.trim()) throw new Error(`Line ${n}: enter a description.`);
+      const it = r.itemSel.value ? itemMap.get(r.itemSel.value) : null;
+      if (it && it.item_type !== 'service') {
+        if (TYPE === 'credit_note') throw new Error(`Line ${n}: credit stock items from the invoice (Credit from invoice).`);
+        need.set(it.id, (need.get(it.id) || 0) + Number(r.qty.value));
+      }
       return {
-        item_id: r.itemSel.value || null, description: r.desc.value.trim(), quantity: Number(r.qty.value),
+        item_id: r.itemSel.value || null, source_line_id: null, description: r.desc.value.trim(), quantity: Number(r.qty.value),
         unit_price: Number(r.price.value), tax_code_id: r.taxSel.value || null, account_id: r.accSel.value || null,
       };
+    });
+    const hasStock = need.size > 0 || lines.some((l) => l.source_line_id);
+    if (hasStock && !wh) throw new Error('Choose the warehouse for the stock lines.');
+    need.forEach((q, id) => {
+      const have = bal.get(`${id}|${wh.id}`) || 0;
+      if (q > have && !wh.allow_negative_stock) {
+        throw new Error(`Only ${qtyFmt(have)} of ${itemMap.get(id).code} on hand in ${wh.code}, ${qtyFmt(q)} needed.`);
+      }
     });
     return lines;
   }
@@ -400,7 +548,7 @@ async function openEditor(existing) {
       p_due: dueIn.value || null, p_terms: termSel.value || null, p_currency: curSel.value,
       p_reference: refIn.value, p_notes: notesIn.value,
       p_manual_rate: (curSel.value !== base && rateManual && Number(rateIn.value) > 0) ? Number(rateIn.value) : null,
-      p_lines,
+      p_lines, p_warehouse: whSel.value || null,
     });
     if (error) throw error;
     docId = data;
@@ -418,7 +566,7 @@ async function openEditor(existing) {
     try { collect(); } catch (e) { return ui.warn(e.message); }
     const ok = await ui.confirm({
       title: `Post ${LABEL.toLowerCase()}`,
-      message: `Post this ${LABEL.toLowerCase()}?\nIt will be numbered, posted to the ledger and locked.`,
+      message: `Post this ${LABEL.toLowerCase()}?\nIt will be numbered, posted to the ledger and locked. Stock lines move stock and post cost of sales.`,
       confirmText: 'Post',
     });
     if (!ok) return;
@@ -440,31 +588,48 @@ async function openEditor(existing) {
 
 async function openViewer(d) {
   const [l, j] = await Promise.all([
-    supabase.from('sales_document_lines').select('*, items(code), gl_accounts(code, name)').eq('document_id', d.id).order('line_no'),
+    supabase.from('sales_document_lines').select('*, items(code, item_type), gl_accounts(code, name)').eq('document_id', d.id).order('line_no'),
     d.journal_id ? supabase.from('journals').select('journal_no').eq('id', d.journal_id).maybeSingle() : Promise.resolve({ data: null }),
   ]);
   if (l.error) return ui.errorFrom(l.error, 'Could not load the document lines.');
   const dec = decOf(d.currency_code);
+  const wh = warehouses.find((w) => w.id === d.warehouse_id);
+  const isStock = (x) => x.items && x.items.item_type !== 'service';
+  const stockLines = l.data.filter(isStock);
+  const cogs = stockLines.reduce((s, x) => s + Number(x.cogs_value), 0);
+  const rate = d.currency_code === base ? 1 : Number(d.fx_rate);
+  const stockNet = stockLines.reduce((s, x) => s + Number(x.net_amount) * rate, 0);
 
   const node = el('div');
   const info = el('p', 'muted',
     [`${custName(d)}`, `Date ${d.doc_date} · Due ${d.due_date}${d.reference ? ` · Ref ${d.reference}` : ''}`,
       d.currency_code === base ? `Currency ${d.currency_code}` : `Currency ${d.currency_code} · Rate ${Number(d.fx_rate).toFixed(6)} to ${base}`,
+      wh ? `Warehouse ${wh.code} - ${wh.name}` : '',
       j.data && j.data.journal_no ? `Ledger journal ${j.data.journal_no}` : ''].filter(Boolean).join('\n'));
   info.style.whiteSpace = 'pre-line';
   node.append(info);
 
   const body = l.data.map((x, i) => `<tr><td>${i + 1}</td><td>${esc(x.items ? x.items.code : '')}</td><td>${esc(x.description)}</td>
     <td class="num">${money(x.quantity, 2)}</td><td class="num">${money(x.unit_price, dec)}</td>
-    <td class="num">${Number(x.tax_rate)}%</td><td class="num">${money(x.net_amount, dec)}</td><td class="num">${money(x.tax_amount, dec)}</td></tr>`).join('');
+    <td class="num">${Number(x.tax_rate)}%</td><td class="num">${money(x.net_amount, dec)}</td><td class="num">${money(x.tax_amount, dec)}</td>
+    <td class="num">${isStock(x) ? money(x.cogs_value) : ''}</td></tr>`).join('');
   const wrapT = el('div', 'table-wrap');
   wrapT.innerHTML = `<table class="grid"><thead><tr><th>#</th><th>Item</th><th>Description</th>
     <th style="text-align:right">Qty</th><th style="text-align:right">Price</th><th style="text-align:right">Tax</th>
-    <th style="text-align:right">Net</th><th style="text-align:right">Tax amount</th></tr></thead><tbody>${body}
+    <th style="text-align:right">Net</th><th style="text-align:right">Tax amount</th>
+    <th style="text-align:right">Cost (${esc(base)})</th></tr></thead>
+    <tbody>${body}
     <tr><td colspan="6"><strong>Total ${esc(d.currency_code)}</strong></td><td class="num"><strong>${money(d.net_total, dec)}</strong></td>
-    <td class="num"><strong>${money(d.tax_total, dec)}</strong></td></tr>
-    <tr><td colspan="6"><strong>Amount due</strong></td><td colspan="2" class="num"><strong>${money(d.gross_total, dec)}</strong></td></tr></tbody></table>`;
+    <td class="num"><strong>${money(d.tax_total, dec)}</strong></td><td class="num"><strong>${cogs ? money(cogs) : ''}</strong></td></tr>
+    <tr><td colspan="6"><strong>Amount ${TYPE === 'invoice' ? 'due' : 'credited'}</strong></td><td colspan="3" class="num"><strong>${money(d.gross_total, dec)}</strong></td></tr>
+    </tbody></table>`;
   node.append(wrapT);
+  if (stockLines.length) {
+    const m = el('p', 'muted', TYPE === 'invoice'
+      ? `Stock lines: sales ${money(stockNet)} ${base}, cost of sales ${money(cogs)}, margin ${money(stockNet - cogs)}.`
+      : `Cost returned to stock: ${money(cogs)} ${base}.`);
+    node.append(m);
+  }
   await ui.dialog({
     title: `${LABEL} ${d.doc_no}`, node, wide: true, dismissValue: 'close',
     buttons: [{ label: 'Close', value: 'close', className: 'btn-ghost' }],

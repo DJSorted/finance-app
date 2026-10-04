@@ -31,6 +31,7 @@ const NAV = [
     { href: '/pages/stock-adjustments.html', label: 'Stock Adjustments' },
     { href: '/pages/stock-transfers.html', label: 'Stock Transfers' },
     { href: '/pages/stock-valuation.html', label: 'Stock Valuation' },
+    { href: '/pages/stock-movements.html', label: 'Stock Movements' },
   ] },
     { section: 'Fixed Assets', items: [
     { href: '/pages/fixed-assets.html', label: 'Asset Register' },
