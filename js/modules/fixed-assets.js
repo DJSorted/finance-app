@@ -19,6 +19,7 @@ const METHOD_LABEL = { straight_line: 'Straight line', reducing_balance: 'Reduci
 
 let categories = [];
 let rows = [];
+let banks = [];
 let base = '';
 let showDisposed = false;
 let needle = '';
@@ -54,14 +55,18 @@ const catSel = el('select', 'compact');
 async function init() {
   document.getElementById('company-title').textContent = ctx.company.name;
   const cid = ctx.companyId;
-  const [c, cu] = await Promise.all([
+  const [c, cu, bk] = await Promise.all([
     supabase.from('asset_categories')
       .select('id, code, name, default_tracking, method, life_months, rate_percent, residual_percent')
       .eq('company_id', cid).order('code'),
     supabase.from('company_currencies').select('code').eq('company_id', cid).eq('is_base', true).maybeSingle(),
+    supabase.from('gl_accounts').select('id, code, name, currency_code').eq('company_id', cid)
+      .eq('control_type', 'bank').eq('is_posting', true).eq('is_active', true).order('code'),
   ]);
   if (c.error) return ui.errorFrom(c.error, 'Could not load the asset categories.');
+  if (bk.error) return ui.errorFrom(bk.error, 'Could not load the bank accounts.');
   categories = c.data;
+  banks = bk.data;
   base = cu.data ? cu.data.code : '';
   asOfEl.value = todayIso();
 
@@ -191,20 +196,28 @@ async function openViewer(assetId) {
   info.style.whiteSpace = 'pre-line';
   node.append(info);
 
-  const body = m.data.map((r) => `<tr><td>${r.movement_date}</td><td>${esc(TYPE_LABEL[r.movement_type] || r.movement_type)}</td>
+  const body = m.data.map((r) => `<tr><td>${r.movement_date}</td>
+    <td>${esc((TYPE_LABEL[r.movement_type] || r.movement_type) + (r.disposal_type ? ` (${r.disposal_type})` : ''))}</td>
     <td>${esc(r.source_no || '')}</td><td class="num">${Number(r.qty_change) ? qtyFmt(r.qty_change) : ''}</td>
     <td class="num">${Number(r.cost_change) ? money(r.cost_change) : ''}</td>
-    <td class="num">${Number(r.accum_change) ? money(r.accum_change) : ''}</td></tr>`).join('');
+    <td class="num">${Number(r.accum_change) ? money(r.accum_change) : ''}</td>
+    <td class="num">${r.movement_type === 'disposal' && Number(r.proceeds) ? money(r.proceeds) : ''}</td>
+    <td class="num">${r.movement_type === 'disposal' && r.gain_loss !== null ? (Number(r.gain_loss) < 0 ? `(${money(-r.gain_loss)})` : money(r.gain_loss)) : ''}</td></tr>`).join('');
   const t = el('div', 'table-wrap');
   t.innerHTML = `<table class="grid"><thead><tr><th>Date</th><th>Type</th><th>Document</th>
-    <th style="text-align:right">Quantity</th><th style="text-align:right">Cost</th><th style="text-align:right">Accumulated</th></tr></thead>
+    <th style="text-align:right">Quantity</th><th style="text-align:right">Cost</th><th style="text-align:right">Accumulated</th>
+    <th style="text-align:right">Proceeds</th><th style="text-align:right">Gain / (loss)</th></tr></thead>
     <tbody>${body}</tbody></table>`;
   node.append(t);
 
   const buttons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }];
   if (CAN_EDIT) buttons.push({ label: 'Edit details', value: 'edit', className: '' });
+  if (CAN_EDIT && x.status === 'active' && Number(x.quantity) > 0) {
+    buttons.push({ label: 'Dispose / write off', value: 'dispose', className: 'btn-danger' });
+  }
   const res = await ui.dialog({ title: `${x.asset_no} - ${x.name}`, node, buttons, dismissValue: 'close', wide: true });
   if (res === 'edit') await editDetails(x);
+  if (res === 'dispose') await disposeAsset(x);
 }
 
 async function editDetails(x) {
@@ -268,6 +281,67 @@ async function openAddExisting() {
     },
   });
   if (saved) { ui.created('Asset'); await run(); }
+}
+
+const DISPOSAL_TYPES = [
+  ['sale', 'Sold'], ['scrap', 'Scrapped'], ['lost', 'Lost'], ['stolen', 'Stolen'], ['damaged', 'Damaged beyond repair'],
+];
+
+async function disposeAsset(x) {
+  const bankOptions = [{ value: '', label: 'Select bank account' }].concat(
+    banks.filter((b) => !b.currency_code || b.currency_code === base).map((b) => ({ value: b.id, label: `${b.code} - ${b.name}` })));
+  const pooled = x.tracking === 'pooled';
+  let chosen = null;
+  const picked = await ui.form({
+    title: `Dispose of or write off ${x.asset_no}`,
+    submitText: 'Continue',
+    fields: [
+      { name: 'type', label: 'What happened', type: 'select', required: true, full: true,
+        options: DISPOSAL_TYPES.map(([value, label]) => ({ value, label })) },
+      { name: 'date', label: 'Date', type: 'date', required: true,
+        hint: 'Must be in an open period. Depreciation must be up to date to the month before.' },
+      { name: 'qty', label: 'Quantity', type: 'number', disabled: !pooled,
+        hint: pooled ? `Up to ${qtyFmt(x.quantity)}. Cost and depreciation are removed in proportion.` : 'A serialised asset leaves as a whole.' },
+      { name: 'proceeds', label: `Proceeds or recovery (${base})`, type: 'number',
+        hint: 'Cash received: a sale price, scrap value or insurance payout. Leave blank if none.' },
+      { name: 'bank', label: 'Received into', type: 'select', options: bankOptions, full: true, hint: 'Needed when there are proceeds.' },
+      { name: 'reference', label: 'Reference' },
+      { name: 'notes', label: 'Notes' },
+    ],
+    values: { type: 'sale', date: todayIso(), qty: Number(x.quantity) },
+    onSubmit: async (v) => {
+      if (!v.date) throw new Error('Enter the date.');
+      if (pooled && !(v.qty > 0 && v.qty <= Number(x.quantity))) throw new Error(`The quantity must be above zero and at most ${qtyFmt(x.quantity)}.`);
+      if (v.proceeds !== null && v.proceeds < 0) throw new Error('Proceeds cannot be negative.');
+      if (v.proceeds > 0 && !v.bank) throw new Error('Choose the bank account the proceeds were received into.');
+      chosen = v;
+    },
+  });
+  if (!picked || !chosen) return;
+
+  const total = Number(x.quantity);
+  const q = pooled ? chosen.qty : total;
+  const r2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+  const cost = q >= total ? Number(x.cost) : r2(Number(x.cost) * q / total);
+  const acc = q >= total ? Number(x.accumulated) : r2(Number(x.accumulated) * q / total);
+  const nbv = r2(cost - acc);
+  const proceeds = chosen.proceeds || 0;
+  const gl = r2(proceeds - nbv);
+  const ok = await ui.confirm({
+    title: 'Post disposal',
+    message: `${DISPOSAL_TYPES.find((d) => d[0] === chosen.type)[1]}: ${qtyFmt(q)} of ${qtyFmt(total)}.\n`
+      + `Cost removed ${money(cost)}, accumulated depreciation ${money(acc)}, net book value ${money(nbv)}.\n`
+      + `Proceeds ${money(proceeds)}: ${gl >= 0 ? 'profit' : 'loss'} of ${money(Math.abs(gl))} ${base} to the disposal account.`,
+    confirmText: 'Post', danger: true,
+  });
+  if (!ok) return;
+  const { error } = await supabase.rpc('dispose_asset', {
+    p_company: ctx.companyId, p_asset: x.id, p_date: chosen.date, p_type: chosen.type, p_qty: pooled ? chosen.qty : null,
+    p_proceeds: proceeds, p_bank: chosen.bank || null, p_reference: chosen.reference, p_notes: chosen.notes,
+  });
+  if (error) return ui.errorFrom(error, 'Could not post the disposal.');
+  ui.success('Disposal posted.');
+  await run();
 }
 
 if (ctx) await init();
