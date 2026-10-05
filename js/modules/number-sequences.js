@@ -9,6 +9,7 @@ const DOC_TYPES = {
   fixed_asset: 'Fixed asset', customer: 'Customer code', supplier: 'Supplier code', item_stock: 'Stock item code', 
   item_service: 'Service item code', item_manufactured: 'Manufactured item code',
   depreciation_run: 'Depreciation run', asset_disposal: 'Asset disposal',
+  booking: 'Hire booking',
 };
 const docLabel = (t) => DOC_TYPES[t] || t;
 const nextRef = (r) => r.prefix + String(r.next_number).padStart(r.padding, '0');

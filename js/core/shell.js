@@ -38,6 +38,11 @@ const NAV = [
     { href: '/pages/depreciation.html', label: 'Depreciation' },
     { href: '/pages/asset-categories.html', label: 'Asset Categories' },
   ] },
+    { section: 'Hire', items: [
+    { href: '/pages/bookings.html', label: 'Bookings' },
+    { href: '/pages/hire-calendar.html', label: 'Hire Calendar' },
+    { href: '/pages/hire-items.html', label: 'Hire Items' },
+  ] },
   { section: 'Sales', items: [
     { href: '/pages/invoices.html', label: 'Invoices' },
     { href: '/pages/credit-notes.html', label: 'Credit Notes' },

@@ -303,3 +303,28 @@ table.grid tr.clickable { cursor: pointer; }
 /* On-hand column in the sales line table */
 .doc-lines th.c-onh { width: 8%; text-align: right; }
 .doc-lines td.onh { text-align: right; white-space: nowrap; color: var(--text-dim); font-size: 13px; }
+
+/* Hire: booking lines and the availability calendar */
+.lines-table.book-lines { width: 100%; min-width: 760px; table-layout: fixed; }
+.book-lines th.c-bitem { width: 34%; }
+.book-lines th.c-bown, .book-lines th.c-bfree { width: 11%; text-align: right; }
+.book-lines th.c-bqty, .book-lines th.c-bdisc { width: 12%; }
+.book-lines th.c-btotal { width: 14%; text-align: right; }
+.book-lines th.c-bdel { width: 6%; }
+.book-lines td { overflow: hidden; }
+.book-lines td.num { text-align: right; white-space: nowrap; }
+.book-lines select, .book-lines input { min-width: 0; }
+.book-lines input[type=number] { text-align: right; }
+.book-lines td.short { color: var(--danger); font-weight: 600; }
+.cal-wrap { overflow-x: auto; }
+table.cal { border-collapse: collapse; min-width: 100%; }
+table.cal th, table.cal td { border: 1px solid var(--border); padding: .25rem .35rem; text-align: center; font-size: 12px; white-space: nowrap; }
+table.cal th.first, table.cal td.first { text-align: left; position: sticky; left: 0; background: var(--surface); min-width: 190px; z-index: 1; }
+table.cal th.wknd { background: var(--surface-2); }
+table.cal th.today { box-shadow: inset 0 -3px 0 var(--primary); }
+table.cal td.cell { cursor: pointer; min-width: 40px; font-family: var(--mono); }
+table.cal td.ok { background: rgba(46, 204, 143, .15); color: var(--success); }
+table.cal td.low { background: rgba(245, 185, 66, .18); color: var(--warning); }
+table.cal td.out { background: rgba(239, 91, 91, .2); color: var(--danger); }
+table.cal td.over { background: var(--danger); color: #fff; }
+table.cal td .held { display: block; font-size: 10px; opacity: .8; }
