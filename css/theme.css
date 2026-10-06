@@ -328,3 +328,10 @@ table.cal td.low { background: rgba(245, 185, 66, .18); color: var(--warning); }
 table.cal td.out { background: rgba(239, 91, 91, .2); color: var(--danger); }
 table.cal td.over { background: var(--danger); color: #fff; }
 table.cal td .held { display: block; font-size: 10px; opacity: .8; }
+
+/* Column filters on list pages */
+tr[hidden] { display: none; }
+.filter-row th { padding: .2rem .3rem; background: var(--surface); border-bottom: 1px solid var(--border); font-weight: 400; }
+.filter-row input, .filter-row select { padding: .2rem .35rem; font-size: 12px; min-width: 64px; }
+.filter-row input[type=number], .filter-row input[type=date] { width: 49%; min-width: 0; }
+.filter-count { display: flex; align-items: center; gap: .75rem; margin: 0 0 .4rem; font-size: 12px; }

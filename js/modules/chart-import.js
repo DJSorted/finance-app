@@ -219,7 +219,7 @@ function validateAccounts(rawRows, db, groupLevels, currencyCodes, controlLookup
 
 export async function downloadTemplate() {
   await exportSheets('chart-import-template.xlsx', [
-    { name: 'Groups', columns: [
+    { name: 'Groups', plain: true, columns: [
       { key: 'code', header: 'Code', width: 14 }, { key: 'name', header: 'Name', width: 30 },
       { key: 'parent', header: 'Parent code', width: 14 }, { key: 'subtotal', header: 'Subtotal', width: 10 },
       { key: 'collapsed', header: 'Collapsed', width: 10 }, { key: 'active', header: 'Active', width: 8 },
@@ -231,7 +231,7 @@ export async function downloadTemplate() {
         { code: 'AST', name: 'Assets', parent: 'BS', subtotal: 'Yes', collapsed: 'No', active: 'Yes', sort: 10 },
         { code: 'CUR', name: 'Current Assets', parent: 'AST', subtotal: 'Yes', collapsed: 'No', active: 'Yes', sort: 10 },
       ] },
-    { name: 'Accounts', columns: [
+    { name: 'Accounts', plain: true, columns: [
       { key: 'code', header: 'Code', width: 14 }, { key: 'name', header: 'Name', width: 30 },
       { key: 'parent', header: 'Parent code', width: 14 }, { key: 'type', header: 'Type', width: 10 },
       { key: 'group', header: 'Group code', width: 14 }, { key: 'normal', header: 'Normal balance', width: 14 },

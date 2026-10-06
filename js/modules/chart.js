@@ -11,9 +11,12 @@ const CONTROL_TYPES = [
   ['inventory', 'Inventory'], ['fixed_assets', 'Fixed assets'], ['accum_depreciation', 'Accumulated depreciation'],
   ['grni', 'Goods received not invoiced'], ['wip', 'Work in progress'], ['bank', 'Bank'],
   ['tax', 'Tax'], ['fx', 'Exchange gains / losses'],
-    ['retained_earnings', 'Retained earnings'], ['opening_balance', 'Opening balance equity'],
+  ['retained_earnings', 'Retained earnings'], ['opening_balance', 'Opening balance equity'],
 ];
-const controlLabel = (v) => (CONTROL_TYPES.find((c) => c[0] === (v || '')) || [, ''])[1] === 'None' ? '' : (CONTROL_TYPES.find((c) => c[0] === (v || '')) || [, ''])[1];
+const controlLabel = (v) => {
+  const found = CONTROL_TYPES.find((c) => c[0] === (v || ''));
+  return !found || found[1] === 'None' ? '' : found[1];
+};
 
 const panel = document.getElementById('panel');
 const toolbar = document.getElementById('toolbar');
@@ -403,13 +406,13 @@ async function doExport() {
     }));
 
     await exportSheets(`chart-of-accounts-${new Date().toISOString().slice(0, 10)}.xlsx`, [
-      { name: 'Groups', rows: groupRows, columns: [
+      { name: 'Groups', plain: true, rows: groupRows, columns: [
         { key: 'code', header: 'Code', width: 14 }, { key: 'name', header: 'Name', width: 32 },
         { key: 'parent', header: 'Parent code', width: 14 }, { key: 'level', header: 'Level', width: 8 },
         { key: 'class', header: 'Class', width: 18 }, { key: 'subtotal', header: 'Subtotal', width: 10 },
         { key: 'collapsed', header: 'Collapsed', width: 10 }, { key: 'active', header: 'Active', width: 8 },
         { key: 'sort', header: 'Sort', width: 8 } ] },
-      { name: 'Accounts', rows: accountRows, columns: [
+      { name: 'Accounts', plain: true, rows: accountRows, columns: [
         { key: 'code', header: 'Code', width: 14 }, { key: 'name', header: 'Name', width: 32 },
         { key: 'parent', header: 'Parent code', width: 14 }, { key: 'level', header: 'Level', width: 8 },
         { key: 'type', header: 'Type', width: 10 }, { key: 'group', header: 'Group code', width: 14 },

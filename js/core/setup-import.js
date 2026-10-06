@@ -118,11 +118,13 @@ async function downloadTemplate(cfg, defs, lk, rows) {
   await exportSheets(`${cfg.file || cfg.table}-import-${date}.xlsx`, [
     {
       name: cfg.plural.slice(0, 31),
+      plain: true,
       columns: defs.map((c) => ({ key: c.header, header: c.header, width: Math.max(16, c.header.length + 2) })),
       rows: rows.map((r) => Object.fromEntries(defs.map((c) => [c.header, toSheetValue(c, r, lk)]))),
     },
     {
       name: 'Help',
+      plain: true,
       columns: [
         { key: 'column', header: 'Column', width: 36 }, { key: 'required', header: 'Required', width: 10 },
         { key: 'format', header: 'Format', width: 60 },

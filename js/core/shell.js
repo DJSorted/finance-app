@@ -2,6 +2,8 @@ import { supabase } from './supabase.js';
 import { requireAuth, signOut, getMemberships, getActiveMembership, setActiveCompany } from './auth.js';
 import { ui } from './ui.js';
 import { logoUrl } from './logo.js';
+import { setExportContext } from './export.js';
+import { watchTableFilters } from './table-filters.js';
 
 // Add new pages here and they appear in the sidebar on every screen.
 const NAV = [
@@ -33,12 +35,12 @@ const NAV = [
     { href: '/pages/stock-valuation.html', label: 'Stock Valuation' },
     { href: '/pages/stock-movements.html', label: 'Stock Movements' },
   ] },
-    { section: 'Fixed Assets', items: [
+  { section: 'Fixed Assets', items: [
     { href: '/pages/fixed-assets.html', label: 'Asset Register' },
     { href: '/pages/depreciation.html', label: 'Depreciation' },
     { href: '/pages/asset-categories.html', label: 'Asset Categories' },
   ] },
-    { section: 'Hire', items: [
+  { section: 'Hire', items: [
     { href: '/pages/bookings.html', label: 'Bookings' },
     { href: '/pages/hire-calendar.html', label: 'Hire Calendar' },
     { href: '/pages/hire-items.html', label: 'Hire Items' },
@@ -63,6 +65,15 @@ const NAV = [
   ] },
 ];
 const EDIT_ROLES = ['owner', 'admin', 'accountant'];
+
+// Pages that get column filters (lists without their own totals or tree rows)
+const FILTER_PAGES = new Set([
+  '/pages/bookings', '/pages/hire-items', '/pages/journals', '/pages/invoices', '/pages/credit-notes', '/pages/receipts',
+  '/pages/bills', '/pages/supplier-credit-notes', '/pages/payments', '/pages/purchase-orders', '/pages/goods-received',
+  '/pages/stock-adjustments', '/pages/stock-transfers', '/pages/customers', '/pages/suppliers', '/pages/items',
+  '/pages/item-categories', '/pages/units', '/pages/warehouses', '/pages/tax', '/pages/payment-terms',
+  '/pages/number-sequences', '/pages/asset-categories',
+]);
 
 function h(tag, cls, text) {
   const e = document.createElement(tag);
@@ -108,6 +119,9 @@ export async function startPage(opts = {}) {
   const active = getActiveMembership(memberships);
   setActiveCompany(active.company_id);
   buildShell(session, memberships, active);
+  setExportContext({ company: active.companies.name });
+  const panelEl = document.getElementById('panel');
+  if (panelEl && FILTER_PAGES.has(normPath(location.pathname))) watchTableFilters(panelEl);
   reveal();
 
   return {
@@ -153,7 +167,7 @@ function buildShell(session, memberships, active) {
   }
   sidebar.append(co);
 
-    const expanded = loadExpanded();
+  const expanded = loadExpanded();
   const nav = h('nav');
   NAV.forEach((s) => {
     const items = h('div', 'nav-items');

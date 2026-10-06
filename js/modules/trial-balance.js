@@ -166,8 +166,18 @@ async function doExport() {
     const extra = data.find((r) => !r.account_id);
     const out = rows.map(({ a, t, depth }) => ({ code: a.code, name: '  '.repeat(depth) + a.name, o: t.o, d: t.d, c: t.c, cl: t.cl }));
     if (extra) out.push({ code: '', name: extra.name, o: +extra.opening, d: 0, c: 0, cl: +extra.closing });
+    // The export lists parent accounts and their children, so the total is taken from the top level only
+    const top = rows.filter((x) => x.depth === 0);
+    out.push({
+      code: '', name: 'Total',
+      o: top.reduce((s, x) => s + x.t.o, 0) + (extra ? +extra.opening : 0),
+      d: top.reduce((s, x) => s + x.t.d, 0),
+      c: top.reduce((s, x) => s + x.t.c, 0),
+      cl: top.reduce((s, x) => s + x.t.cl, 0) + (extra ? +extra.closing : 0),
+    });
     await exportSheets(`trial-balance-${fromEl.value}-to-${toEl.value}.xlsx`, [{
-      name: 'Trial balance', rows: out,
+      name: 'Trial balance', title: 'Trial balance', subtitle: `${fromEl.value} to ${toEl.value}, amounts in ${base}`,
+      rows: out, totals: false,
       columns: [
         { key: 'code', header: 'Code', width: 14 }, { key: 'name', header: 'Account', width: 44 },
         { key: 'o', header: `Opening (${base})`, width: 16 }, { key: 'd', header: 'Debit', width: 16 },

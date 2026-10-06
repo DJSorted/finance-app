@@ -21,9 +21,14 @@ let customers = [];
 let hireItems = [];
 let hireMap = new Map();
 let owned = new Map();
+let lineMap = new Map();
 let base = '';
 let statusFilter = 'all';
 let needle = '';
+let custFilter = '';
+let itemFilter = '';
+let fromFilter = '';
+let toFilter = '';
 
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -69,7 +74,7 @@ function priceFor(h, qty, days, disc) {
 async function load() {
   const cid = ctx.companyId;
   const [b, c, h, o, cu] = await Promise.all([
-    supabase.from('bookings').select('*, customers(code, name)').eq('company_id', cid)
+    supabase.from('bookings').select('*, customers(code, name), booking_lines(hire_item_id)').eq('company_id', cid)
       .order('start_date', { ascending: false }).limit(500),
     supabase.from('customers').select('id, code, name').eq('company_id', cid).eq('is_active', true).order('code'),
     supabase.from('hire_items').select('*').eq('company_id', cid).eq('is_active', true).order('code'),
@@ -78,6 +83,7 @@ async function load() {
   ]);
   for (const r of [b, c, h, o]) if (r.error) throw r.error;
   bookings = b.data;
+  lineMap = new Map(b.data.map((x) => [x.id, new Set((x.booking_lines || []).map((l) => l.hire_item_id))]));
   customers = c.data;
   hireItems = h.data;
   hireMap = new Map(hireItems.map((x) => [x.id, x]));
@@ -97,31 +103,56 @@ const holdExpired = (b) => b.status === 'provisional' && b.hold_until && b.hold_
 
 function render() {
   document.getElementById('company-title').textContent = ctx.company.name;
-  hint.textContent = `Totals are hire charges excluding tax, in ${base}. Provisional bookings hold stock until their hold date, then release it automatically. Confirmed bookings are checked against availability when saved.`;
+  hint.textContent = `Totals are hire charges excluding tax, in ${base}. Provisional bookings hold stock until their hold date, then release it automatically. Use the filters to find a customer, an item or a date range.`;
   toolbar.replaceChildren();
   if (CAN_BOOK) toolbar.append(btn('New booking', 'btn-primary', () => openEditor(null)));
   const box = el('input');
   box.type = 'search';
-  box.placeholder = 'Search';
+  box.placeholder = 'Search number, event, venue';
   box.value = needle;
-  box.style.maxWidth = '240px';
+  box.style.maxWidth = '220px';
   box.addEventListener('input', () => { needle = box.value.trim().toLowerCase(); renderTable(); });
   const sel = el('select', 'compact');
-  option(sel, 'all', 'All');
+  option(sel, 'all', 'All statuses');
   Object.entries(STATUS).forEach(([k, v]) => option(sel, k, v));
   sel.value = statusFilter;
   sel.addEventListener('change', () => { statusFilter = sel.value; renderTable(); });
-  toolbar.append(box, sel, el('span', 'spacer'), btn('Export to Excel', '', doExport));
+  const custSel = el('select', 'compact');
+  custSel.style.maxWidth = '200px';
+  option(custSel, '', 'All customers');
+  customers.forEach((c) => option(custSel, c.id, `${c.code} - ${c.name}`));
+  custSel.value = custFilter;
+  custSel.addEventListener('change', () => { custFilter = custSel.value; renderTable(); });
+  const itemSel = el('select', 'compact');
+  itemSel.style.maxWidth = '200px';
+  option(itemSel, '', 'All hire items');
+  hireItems.forEach((h) => option(itemSel, h.id, `${h.code} - ${h.name}`));
+  itemSel.value = itemFilter;
+  itemSel.addEventListener('change', () => { itemFilter = itemSel.value; renderTable(); });
+  const from = el('input'); from.type = 'date'; from.value = fromFilter; from.style.width = 'auto';
+  const to = el('input'); to.type = 'date'; to.value = toFilter; to.style.width = 'auto';
+  from.addEventListener('change', () => { fromFilter = from.value; renderTable(); });
+  to.addEventListener('change', () => { toFilter = to.value; renderTable(); });
+  const clear = btn('Clear filters', 'btn-ghost', () => {
+    needle = ''; statusFilter = 'all'; custFilter = ''; itemFilter = ''; fromFilter = ''; toFilter = '';
+    render();
+  });
+  toolbar.append(box, sel, custSel, itemSel, el('span', 'muted', 'Dates'), from, el('span', 'muted', 'to'), to, clear,
+    el('span', 'spacer'), btn('Export to Excel', '', doExport));
   renderTable();
 }
 
 const visible = () => bookings.filter((b) => (statusFilter === 'all' || b.status === statusFilter)
+  && (!custFilter || b.customer_id === custFilter)
+  && (!itemFilter || (lineMap.get(b.id) || new Set()).has(itemFilter))
+  && (!fromFilter || b.end_date >= fromFilter)
+  && (!toFilter || b.start_date <= toFilter)
   && (!needle || [b.booking_no, b.event_name, b.venue_name, custName(b)].some((v) => String(v || '').toLowerCase().includes(needle))));
 
 function renderTable() {
   if (!bookings.length) { panel.innerHTML = '<p class="muted">No bookings yet.</p>'; return; }
   const list = visible();
-  if (!list.length) { panel.innerHTML = '<p class="muted">Nothing matches.</p>'; return; }
+  if (!list.length) { panel.innerHTML = '<p class="muted">No bookings match these filters.</p>'; return; }
   const body = list.map((b) => `<tr class="clickable" data-id="${b.id}">
     <td>${esc(b.booking_no)}</td><td>${esc(b.event_name)}</td><td>${esc(custName(b))}</td><td>${esc(b.venue_name || '')}</td>
     <td>${b.start_date} to ${b.end_date}</td><td class="num">${b.hire_days}</td>
@@ -129,7 +160,8 @@ function renderTable() {
       ${b.status === 'provisional' ? ` <span class="badge ${holdExpired(b) ? 'st-error' : ''}">${holdExpired(b) ? 'Hold expired' : `Hold to ${b.hold_until}`}</span>` : ''}
       ${b.availability_override ? ' <span class="badge st-error">Override</span>' : ''}</td>
     <td class="num">${money(b.total)}</td></tr>`).join('');
-  panel.innerHTML = `<div class="table-wrap"><table class="grid"><thead><tr><th>No</th><th>Event</th><th>Customer</th><th>Venue</th>
+  panel.innerHTML = `<p class="muted">${list.length} of ${bookings.length} bookings</p>
+    <div class="table-wrap"><table class="grid"><thead><tr><th>No</th><th>Event</th><th>Customer</th><th>Venue</th>
     <th>Dates</th><th style="text-align:right">Days</th><th>Status</th><th style="text-align:right">Total</th></tr></thead>
     <tbody>${body}</tbody></table></div>`;
 }
@@ -145,7 +177,7 @@ panel.addEventListener('click', (e) => {
 async function doExport() {
   try {
     await exportSheets(`bookings-${todayIso()}.xlsx`, [{
-      name: 'Bookings',
+      name: 'Bookings', title: 'Hire bookings',
       rows: visible().map((b) => ({
         no: b.booking_no, event: b.event_name, customer: custName(b), venue: b.venue_name || '', from: b.start_date, to: b.end_date,
         days: b.hire_days, status: STATUS[b.status], hold: b.hold_until || '', total: Number(b.total),
