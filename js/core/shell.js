@@ -43,6 +43,8 @@ const NAV = [
   { section: 'Hire', items: [
     { href: '/pages/bookings.html', label: 'Bookings' },
     { href: '/pages/hire-calendar.html', label: 'Hire Calendar' },
+    { href: '/pages/hire-out.html', label: 'Out on Hire' },
+    { href: '/pages/hire-repairs.html', label: 'Repair Queue' },
     { href: '/pages/hire-items.html', label: 'Hire Items' },
   ] },
   { section: 'Sales', items: [
@@ -68,7 +70,8 @@ const EDIT_ROLES = ['owner', 'admin', 'accountant'];
 
 // Pages that get column filters (lists without their own totals or tree rows)
 const FILTER_PAGES = new Set([
-  '/pages/bookings', '/pages/hire-items', '/pages/journals', '/pages/invoices', '/pages/credit-notes', '/pages/receipts',
+  '/pages/bookings', '/pages/hire-items', '/pages/hire-repairs', '/pages/hire-out',
+  '/pages/journals', '/pages/invoices', '/pages/credit-notes', '/pages/receipts',
   '/pages/bills', '/pages/supplier-credit-notes', '/pages/payments', '/pages/purchase-orders', '/pages/goods-received',
   '/pages/stock-adjustments', '/pages/stock-transfers', '/pages/customers', '/pages/suppliers', '/pages/items',
   '/pages/item-categories', '/pages/units', '/pages/warehouses', '/pages/tax', '/pages/payment-terms',

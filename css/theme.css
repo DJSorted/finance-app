@@ -335,3 +335,6 @@ tr[hidden] { display: none; }
 .filter-row input, .filter-row select { padding: .2rem .35rem; font-size: 12px; min-width: 64px; }
 .filter-row input[type=number], .filter-row input[type=date] { width: 49%; min-width: 0; }
 .filter-count { display: flex; align-items: center; gap: .75rem; margin: 0 0 .4rem; font-size: 12px; }
+
+/* Hire part 2 */
+table.cal td .una { display: block; font-size: 10px; opacity: .85; }

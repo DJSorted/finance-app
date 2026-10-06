@@ -1,198 +1,206 @@
 import { supabase } from '../core/supabase.js';
 import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
+import { exportSheets } from '../core/export.js';
 
 const ctx = await startPage();
 
 const toolbar = document.getElementById('toolbar');
-const yearsEl = document.getElementById('years');
-const checklistEl = document.getElementById('checklist');
+const hint = document.getElementById('hint');
+const panel = document.getElementById('panel');
+const STATUS = { provisional: 'Provisional', confirmed: 'Confirmed', dispatched: 'Dispatched' };
+const KIND = { repair: 'In repair', missing: 'Missing' };
+const DOW = 'SMTWTFS';
 
-let years = [];
-let periods = [];
-let equityAccounts = [];
-const expanded = new Set();
-let firstLoad = true;
+let rows = [];
+let itemFilter = '';
+let needle = '';
 
-const today = new Date().toISOString().slice(0, 10);
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-
-function btn(label, cls, onClick) {
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.className = `btn ${cls}`.trim();
-  b.textContent = label;
-  b.addEventListener('click', onClick);
-  return b;
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
 }
-
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const qtyFmt = (n) => Number(n).toLocaleString(undefined, { maximumFractionDigits: 4 });
+const todayIso = () => new Date().toISOString().slice(0, 10);
 function addDays(iso, n) {
   const d = new Date(`${iso}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
 }
-
-/* ---------- data ---------- */
-
-async function load() {
-  const cid = ctx.companyId;
-  const [y, p, a] = await Promise.all([
-    supabase.from('fiscal_years').select('*').eq('company_id', cid).order('start_date'),
-    supabase.from('fiscal_periods').select('*').eq('company_id', cid).order('start_date'),
-    supabase.from('gl_accounts').select('id, code, name, control_type')
-      .eq('company_id', cid).in('control_type', ['retained_earnings', 'opening_balance']),
-  ]);
-  for (const r of [y, p, a]) if (r.error) throw r.error;
-  years = y.data;
-  periods = p.data;
-  equityAccounts = a.data;
-  if (firstLoad) {
-    years.forEach((yr) => { if (today >= yr.start_date && today <= yr.end_date) expanded.add(yr.id); });
-    if (!expanded.size && years.length) expanded.add(years[years.length - 1].id);
-    firstLoad = false;
-  }
+function btn(text, cls, onClick) {
+  const b = el('button', `btn ${cls}`.trim(), text);
+  b.type = 'button';
+  b.addEventListener('click', onClick);
+  return b;
 }
 
-async function refresh() {
-  try { await load(); } catch (e) { ui.errorFrom(e, 'Could not load the financial calendar.'); }
+const fromEl = el('input'); fromEl.type = 'date'; fromEl.style.width = 'auto';
+const spanSel = el('select', 'compact');
+[14, 21, 31, 60].forEach((n) => { const o = el('option', '', `${n} days`); o.value = String(n); spanSel.append(o); });
+spanSel.value = '21';
+const itemSel = el('select', 'compact');
+itemSel.style.maxWidth = '240px';
+const search = el('input');
+search.type = 'search';
+search.placeholder = 'Search hire items';
+search.style.maxWidth = '200px';
+
+async function init() {
+  document.getElementById('company-title').textContent = ctx.company.name;
+  fromEl.value = todayIso();
+  itemSel.addEventListener('change', () => { itemFilter = itemSel.value; render(); });
+  search.addEventListener('input', () => { needle = search.value.trim().toLowerCase(); render(); });
+  toolbar.append(el('span', 'muted', 'From'), fromEl, spanSel, itemSel, search, btn('Run', 'btn-primary', run),
+    btn('Today', '', () => { fromEl.value = todayIso(); run(); }),
+    btn('Back', '', () => { fromEl.value = addDays(fromEl.value, -Number(spanSel.value)); run(); }),
+    btn('Forward', '', () => { fromEl.value = addDays(fromEl.value, Number(spanSel.value)); run(); }),
+    el('span', 'spacer'), btn('Export to Excel', '', doExport));
+  hint.textContent = 'Each cell shows the units still free that day, after confirmed bookings, items still out at venues, unexpired provisional holds (with buffer days) and units out of service. Green is plenty, amber is low, red is none, solid red is overbooked. Click a cell to see why.';
+  await run();
+}
+
+async function run() {
+  if (!fromEl.value) return ui.warn('Choose the start date.');
+  const to = addDays(fromEl.value, Number(spanSel.value) - 1);
+  const { data, error } = await supabase.rpc('hire_calendar', { p_company: ctx.companyId, p_from: fromEl.value, p_to: to });
+  if (error) return ui.errorFrom(error, 'Could not load the calendar.');
+  rows = data;
+  fillItems();
   render();
 }
 
-/* ---------- render ---------- */
+function fillItems() {
+  const keep = itemSel.value;
+  itemSel.replaceChildren();
+  const all = el('option', '', 'All hire items');
+  all.value = '';
+  itemSel.append(all);
+  const seen = new Set();
+  rows.forEach((r) => {
+    if (seen.has(r.hire_item_id)) return;
+    seen.add(r.hire_item_id);
+    const o = el('option', '', `${r.code} - ${r.name}`);
+    o.value = r.hire_item_id;
+    itemSel.append(o);
+  });
+  itemSel.value = seen.has(keep) ? keep : '';
+  itemFilter = itemSel.value;
+}
+
+function grid() {
+  const days = [...new Set(rows.map((r) => r.day))];
+  const map = new Map();
+  rows.forEach((r) => {
+    if (!map.has(r.hire_item_id)) map.set(r.hire_item_id, { id: r.hire_item_id, code: r.code, name: r.name, owned: Number(r.owned), cells: new Map() });
+    map.get(r.hire_item_id).cells.set(r.day, r);
+  });
+  const items = [...map.values()].filter((it) => (!itemFilter || it.id === itemFilter)
+    && (!needle || `${it.code} ${it.name}`.toLowerCase().includes(needle)));
+  return { days, items };
+}
+
+function cellInfo(it, d) {
+  const c = it.cells.get(d);
+  const conf = Number(c.confirmed_qty);
+  const held = Number(c.held_qty);
+  const una = Number(c.unavail_qty);
+  const free = it.owned - conf - held - una;
+  const cls = free < 0 ? 'over' : (free === 0 ? 'out' : (free <= it.owned * 0.2 ? 'low' : 'ok'));
+  return { conf, held, una, free, cls };
+}
 
 function render() {
-  toolbar.replaceChildren();
-  if (ctx.canEdit) toolbar.append(btn('Add financial year', 'btn-primary', addYear));
-  renderYears();
-  renderChecklist();
-}
-
-function renderYears() {
-  if (!years.length) {
-    yearsEl.innerHTML = '<div class="card" style="margin-bottom:1rem"><p class="muted">No financial year yet. Add your first one to get started.</p></div>';
-    return;
-  }
-  const latestId = years[years.length - 1].id;
-  yearsEl.innerHTML = years.map((y) => {
-    const open = expanded.has(y.id);
-    const del = ctx.canEdit && y.id === latestId ? '<button class="btn btn-sm" data-act="delyear">Delete year</button>' : '';
-    const rows = periods.filter((p) => p.year_id === y.id).map((p) => {
-      const current = today >= p.start_date && today <= p.end_date;
-      const act = !ctx.canEdit ? '' : (p.status === 'open'
-        ? '<button class="btn btn-sm" data-act="close">Close</button>'
-        : '<button class="btn btn-sm" data-act="reopen">Reopen</button>');
-      return `<tr data-period="${p.id}">
-        <td class="num">${p.period_no}</td>
-        <td>${esc(p.name)}${current ? ' <span class="badge">current</span>' : ''}</td>
-        <td>${p.start_date}</td><td>${p.end_date}</td>
-        <td><span class="badge ${p.status}">${p.status === 'open' ? 'Open' : 'Closed'}</span></td>
-        <td><div class="row-actions">${act}</div></td></tr>`;
-    }).join('');
-    return `<div class="card" style="margin-bottom:1rem" data-year="${y.id}">
-      <div class="page-head" style="margin-bottom:${open ? '.75rem' : '0'}">
-        <div><span class="tree-caret" data-act="toggle">${open ? '▾' : '▸'}</span>
-          <strong>${esc(y.name)}</strong> <span class="muted">${y.start_date} to ${y.end_date}</span>
-          <span class="badge ${y.status}">${y.status === 'open' ? 'Open' : 'Closed'}</span></div>
-        <div class="row-actions">${del}</div>
-      </div>
-      ${open ? `<div class="table-wrap"><table class="grid"><thead><tr>
-        <th>No</th><th>Period</th><th>From</th><th>To</th><th>Status</th><th></th></tr></thead>
-        <tbody>${rows}</tbody></table></div>` : ''}
-    </div>`;
+  if (!rows.length) { panel.innerHTML = '<p class="muted">No active hire items yet. Set them up under Hire Items.</p>'; return; }
+  const { days, items } = grid();
+  if (!items.length) { panel.innerHTML = '<p class="muted">No hire items match the filter.</p>'; return; }
+  const today = todayIso();
+  const head = days.map((d) => {
+    const wk = new Date(`${d}T00:00:00Z`).getUTCDay();
+    return `<th class="${wk === 0 || wk === 6 ? 'wknd' : ''} ${d === today ? 'today' : ''}">${d.slice(8)}<br><small>${DOW[wk]}</small></th>`;
   }).join('');
+  const body = items.map((it) => `<tr><td class="first"><strong>${esc(it.code)}</strong> ${esc(it.name)}<br><small class="muted">${qtyFmt(it.owned)} units</small></td>
+    ${days.map((d) => {
+    const c = cellInfo(it, d);
+    return `<td class="cell ${c.cls}" data-item="${it.id}" data-day="${d}" title="Owned ${qtyFmt(it.owned)}, booked or out ${qtyFmt(c.conf)}, on hold ${qtyFmt(c.held)}, out of service ${qtyFmt(c.una)}">${qtyFmt(c.free)}${c.held ? `<span class="held">+${qtyFmt(c.held)} held</span>` : ''}${c.una ? `<span class="una">−${qtyFmt(c.una)} out of service</span>` : ''}</td>`;
+  }).join('')}</tr>`).join('');
+  panel.innerHTML = `<div class="cal-wrap"><table class="cal"><thead><tr><th class="first">Hire item</th>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
-function renderChecklist() {
-  const re = equityAccounts.find((a) => a.control_type === 'retained_earnings');
-  const ob = equityAccounts.find((a) => a.control_type === 'opening_balance');
-  const item = (ok, title, detail) =>
-    `<p><span class="badge ${ok ? 'open' : 'closed'}">${ok ? 'Done' : 'To do'}</span> <strong>${title}</strong><br>
-     <span class="muted">${detail}</span></p>`;
-  checklistEl.innerHTML =
-    item(years.length > 0, 'Financial calendar',
-      years.length ? `${years.length} financial year(s) set up.` : 'Add your first financial year above.')
-    + item(!!re, 'Retained earnings account',
-      re ? `${esc(re.code)} ${esc(re.name)}`
-        : 'In the <a href="/pages/chart.html">Chart of Accounts</a>, create a posting account in a Balance Sheet equity group, '
-          + 'with normal balance Credit and Control account set to Retained earnings.')
-    + item(!!ob, 'Opening balance equity (optional)',
-      ob ? `${esc(ob.code)} ${esc(ob.name)}`
-        : 'A temporary equity account for loading opening balances. Create it the same way with Control account set to Opening balance equity.');
+async function doExport() {
+  const { days, items } = grid();
+  if (!items.length) return ui.warn('There is nothing to export for these filters.');
+  const COLOURS = {
+    ok: { fill: 'D1FAE5' }, low: { fill: 'FEF3C7' }, out: { fill: 'FEE2E2' }, over: { fill: 'DC2626', color: 'FFFFFF', bold: true },
+  };
+  const columns = [
+    { key: 'item', header: 'Hire item', width: 34 }, { key: 'units', header: 'Units', width: 9 },
+    ...days.map((d) => ({ key: `d${d}`, header: `${d.slice(5)} ${DOW[new Date(`${d}T00:00:00Z`).getUTCDay()]}`, width: 8 })),
+  ];
+  const out = items.map((it) => {
+    const row = { item: `${it.code} - ${it.name}`, units: it.owned, _cls: {} };
+    days.forEach((d) => { const c = cellInfo(it, d); row[`d${d}`] = c.free; row._cls[`d${d}`] = c.cls; });
+    return row;
+  });
+  try {
+    await exportSheets(`hire-availability-${days[0]}-to-${days[days.length - 1]}.xlsx`, [{
+      name: 'Availability', title: 'Hire availability',
+      subtitle: `Free units per day, ${days[0]} to ${days[days.length - 1]}. Red means none free, solid red means overbooked.`,
+      totals: false, rows: out, columns,
+      styleCell: (row, col) => (row._cls && row._cls[col.key] ? COLOURS[row._cls[col.key]] : null),
+    }]);
+  } catch (e) { ui.errorFrom(e, 'Could not export.'); }
 }
 
-/* ---------- actions ---------- */
+panel.addEventListener('click', async (e) => {
+  const td = e.target.closest('td.cell');
+  if (!td) return;
+  const item = rows.find((r) => r.hire_item_id === td.dataset.item);
+  const day = td.dataset.day;
+  const today = todayIso();
+  const [bl, un] = await Promise.all([
+    supabase.from('booking_lines')
+      .select('qty, qty_good, qty_damaged, qty_missing, bookings!inner(booking_no, event_name, venue_name, start_date, end_date, status, hold_until, customers(code, name))')
+      .eq('company_id', ctx.companyId).eq('hire_item_id', td.dataset.item),
+    supabase.from('hire_unavailable').select('kind, qty_open, logged_on, expected_back, notes, bookings(booking_no)')
+      .eq('company_id', ctx.companyId).eq('hire_item_id', td.dataset.item).eq('status', 'open'),
+  ]);
+  if (bl.error) return ui.errorFrom(bl.error, 'Could not load the bookings.');
+  if (un.error) return ui.errorFrom(un.error, 'Could not load the out-of-service units.');
 
-yearsEl.addEventListener('click', async (e) => {
-  const t = e.target.closest('[data-act]');
-  if (!t) return;
-  const yearId = t.closest('[data-year]').dataset.year;
-  const act = t.dataset.act;
-  if (act === 'toggle') {
-    if (expanded.has(yearId)) expanded.delete(yearId); else expanded.add(yearId);
-    renderYears();
-    return;
+  const list = bl.data.map((l) => {
+    const b = l.bookings;
+    const out = b.status === 'dispatched';
+    const qty = out ? Math.max(Number(l.qty) - Number(l.qty_good) - Number(l.qty_damaged) - Number(l.qty_missing), 0) : Number(l.qty);
+    const end = out ? (b.end_date > today ? b.end_date : today) : b.end_date;
+    const live = b.status === 'confirmed' || out || (b.status === 'provisional' && b.hold_until >= today);
+    return { l, b, qty, live: live && qty > 0 && day >= addDays(b.start_date, -item.buf_before) && day <= addDays(end, item.buf_after) };
+  }).filter((x) => x.live);
+  const down = un.data.filter((u) => day >= u.logged_on && (!u.expected_back || u.expected_back < today || day < u.expected_back));
+
+  const node = el('div');
+  const t1 = el('div', 'table-wrap');
+  t1.innerHTML = list.length
+    ? `<table class="grid"><thead><tr><th>Booking</th><th>Customer</th><th>Event</th><th>Out</th><th>Back</th><th>Status</th>
+      <th style="text-align:right">Quantity</th></tr></thead><tbody>${list.map(({ b, qty }) => `<tr><td>${esc(b.booking_no)}</td>
+      <td>${esc(b.customers ? b.customers.name : '')}</td><td>${esc(b.event_name)}</td>
+      <td>${b.start_date}</td><td>${b.end_date}${b.status === 'dispatched' && b.end_date < today ? ' <span class="badge st-error">Overdue</span>' : ''}</td>
+      <td>${STATUS[b.status]}${b.status === 'provisional' ? ` (to ${b.hold_until})` : ''}</td>
+      <td class="num">${qtyFmt(qty)}</td></tr>`).join('')}</tbody></table>`
+    : '<p class="muted">No bookings are holding this item on that day.</p>';
+  node.append(t1);
+  if (down.length) {
+    node.append(el('h4', '', 'Out of service'));
+    const t2 = el('div', 'table-wrap');
+    t2.innerHTML = `<table class="grid"><thead><tr><th>Reason</th><th style="text-align:right">Units</th><th>Since</th><th>Expected back</th><th>Booking</th><th>Notes</th></tr></thead><tbody>
+      ${down.map((u) => `<tr><td>${KIND[u.kind]}</td><td class="num">${qtyFmt(u.qty_open)}</td><td>${u.logged_on}</td><td>${u.expected_back || ''}</td>
+      <td>${esc(u.bookings ? u.bookings.booking_no : '')}</td><td>${esc(u.notes || '')}</td></tr>`).join('')}</tbody></table>`;
+    node.append(t2);
   }
-  if (!ctx.canEdit) return;
-  if (act === 'delyear') return deleteYear(yearId);
-  const row = t.closest('tr');
-  if (row) await setStatus(row.dataset.period, act === 'close' ? 'closed' : 'open');
+  await ui.dialog({ title: `${item.code} - ${item.name} on ${day}`, node, wide: true, dismissValue: 'close',
+    buttons: [{ label: 'Close', value: 'close', className: 'btn-ghost' }] });
 });
 
-async function setStatus(id, status) {
-  const p = periods.find((x) => x.id === id);
-  if (!p) return;
-  const closing = status === 'closed';
-  const ok = await ui.confirm({
-    title: closing ? 'Close period' : 'Reopen period',
-    message: closing
-      ? `Close ${p.name}?\nNo new transactions can be posted into a closed period.`
-      : `Reopen ${p.name}?`,
-    confirmText: closing ? 'Close period' : 'Reopen',
-  });
-  if (!ok) return;
-  const { error } = await supabase.from('fiscal_periods').update({ status }).eq('id', id);
-  if (error) return ui.errorFrom(error);
-  ui.updated('Period');
-  await refresh();
-}
-
-async function deleteYear(id) {
-  if (!(await ui.confirmDelete('Financial year'))) return;
-  const { error } = await supabase.rpc('delete_fiscal_year', { p_year: id });
-  if (error) return ui.errorFrom(error);
-  ui.deleted('Financial year');
-  await refresh();
-}
-
-async function addYear() {
-  const last = years[years.length - 1];
-  const start = last ? addDays(last.end_date, 1) : `${new Date().getFullYear()}-01-01`;
-  const saved = await ui.form({
-    title: 'Add financial year',
-    fields: [
-      { name: 'start', label: 'Start date', type: 'date', required: true, disabled: !!last, full: true,
-        hint: last ? 'A new year always starts the day after the previous one ends.'
-          : 'The first day of your financial year. It must be the 1st of a month.' },
-      { name: 'name', label: 'Name (optional)', full: true, hint: 'Leave blank for the default, for example Financial year 2027.' },
-    ],
-    values: { start },
-    onSubmit: async (v) => {
-      const { error } = await supabase.rpc('create_fiscal_year', {
-        p_company: ctx.companyId, p_start: v.start, p_name: v.name,
-      });
-      if (error) throw error;
-    },
-  });
-  if (saved) {
-    ui.created('Financial year');
-    await refresh();
-    if (years.length) { expanded.add(years[years.length - 1].id); renderYears(); }
-  }
-}
-
-/* ---------- start ---------- */
-
-if (ctx) {
-  document.getElementById('company-title').textContent = ctx.company.name;
-  await refresh();
-}
+if (ctx) await init();
