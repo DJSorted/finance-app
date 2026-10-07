@@ -17,6 +17,9 @@ const CAN_CLOSE = ctx ? ctx.canEdit : false;
 const STATUS = { enquiry: 'Enquiry', provisional: 'Provisional', confirmed: 'Confirmed', dispatched: 'Dispatched', returned: 'Returned', closed: 'Closed', cancelled: 'Cancelled' };
 const BADGE = { provisional: 'st-update', confirmed: 'open', cancelled: 'st-error' };
 const EDITABLE = ['enquiry', 'provisional', 'confirmed'];
+const INVOICEABLE = ['confirmed', 'dispatched', 'returned', 'closed'];
+const DEPOSITABLE = ['provisional', 'confirmed', 'dispatched', 'returned'];
+const KIND_LABEL = { hire: 'Hire', extra_days: 'Extra days', damaged: 'Damaged', missing: 'Missing' };
 
 let bookings = [];
 let customers = [];
@@ -24,11 +27,13 @@ let hireItems = [];
 let hireMap = new Map();
 let owned = new Map();
 let lineMap = new Map();
+let banks = [];
 let base = '';
 let statusFilter = 'all';
 let needle = '';
 let custFilter = '';
 let itemFilter = '';
+let invFilter = '';
 let fromFilter = '';
 let toFilter = '';
 
@@ -118,24 +123,30 @@ function noteHtml({ title, no, b, rows, picking }) {
 
 async function load() {
   const cid = ctx.companyId;
-  const [b, c, h, o, cu] = await Promise.all([
-    supabase.from('bookings').select('*, customers(code, name), booking_lines(hire_item_id, qty, qty_dispatched)').eq('company_id', cid)
-      .order('start_date', { ascending: false }).limit(500),
+  const [b, c, h, o, cu, bk] = await Promise.all([
+    supabase.from('bookings')
+      .select('*, customers(code, name), booking_lines(hire_item_id, qty, qty_dispatched), sales_documents!sales_documents_booking_id_fkey(id, doc_no, status)')
+      .eq('company_id', cid).order('start_date', { ascending: false }).limit(500),
     supabase.from('customers').select('id, code, name').eq('company_id', cid).eq('is_active', true).order('code'),
     supabase.from('hire_items').select('*').eq('company_id', cid).eq('is_active', true).order('code'),
     supabase.rpc('hire_items_owned', { p_company: cid }),
     supabase.from('company_currencies').select('code').eq('company_id', cid).eq('is_base', true).maybeSingle(),
+    supabase.from('gl_accounts').select('id, code, name, currency_code').eq('company_id', cid)
+      .eq('control_type', 'bank').eq('is_posting', true).eq('is_active', true).order('code'),
   ]);
-  for (const r of [b, c, h, o]) if (r.error) throw r.error;
+  for (const r of [b, c, h, o, bk]) if (r.error) throw r.error;
+  base = cu.data ? cu.data.code : '';
   bookings = b.data.map((x) => ({
-    ...x, undispatched: (x.booking_lines || []).some((l) => Number(l.qty) > Number(l.qty_dispatched)),
+    ...x,
+    undispatched: (x.booking_lines || []).some((l) => Number(l.qty) > Number(l.qty_dispatched)),
+    invoices: x.sales_documents || [],
   }));
   lineMap = new Map(b.data.map((x) => [x.id, new Set((x.booking_lines || []).map((l) => l.hire_item_id))]));
   customers = c.data;
   hireItems = h.data;
   hireMap = new Map(hireItems.map((x) => [x.id, x]));
   owned = new Map(o.data.map((x) => [x.hire_item_id, Number(x.owned)]));
-  base = cu.data ? cu.data.code : '';
+  banks = bk.data.filter((x) => !x.currency_code || x.currency_code === base);
 }
 
 async function refresh() {
@@ -143,14 +154,21 @@ async function refresh() {
   render();
 }
 
+async function reopen(id) {
+  await refresh();
+  const nb = bookings.find((x) => x.id === id);
+  if (nb) await openViewer(nb);
+}
+
 /* ---------- list ---------- */
 
 const holdExpired = (b) => b.status === 'provisional' && b.hold_until && b.hold_until < todayIso();
 const overdue = (b) => b.status === 'dispatched' && b.end_date < todayIso();
+const invText = (b) => b.invoices.map((d) => d.doc_no || 'Draft').join(', ');
 
 function render() {
   document.getElementById('company-title').textContent = ctx.company.name;
-  hint.textContent = `Totals are hire charges excluding tax, in ${base}. Provisional bookings hold stock until their hold date, then release it automatically. Use the buttons on a row to dispatch, check in a return or close.`;
+  hint.textContent = `Totals are hire charges excluding tax, in ${base}. Provisional bookings hold stock until their hold date, then release it automatically. Use the buttons on a row to dispatch, check in, invoice or close; View shows the deposit.`;
   toolbar.replaceChildren();
   if (CAN_BOOK) toolbar.append(btn('New booking', 'btn-primary', () => openEditor(null)));
   const box = el('input');
@@ -164,6 +182,12 @@ function render() {
   Object.entries(STATUS).forEach(([k, v]) => option(sel, k, v));
   sel.value = statusFilter;
   sel.addEventListener('change', () => { statusFilter = sel.value; renderTable(); });
+  const invSel = el('select', 'compact');
+  option(invSel, '', 'All invoicing');
+  option(invSel, 'none', 'Not invoiced');
+  option(invSel, 'some', 'Invoiced');
+  invSel.value = invFilter;
+  invSel.addEventListener('change', () => { invFilter = invSel.value; renderTable(); });
   const custSel = el('select', 'compact');
   custSel.style.maxWidth = '200px';
   option(custSel, '', 'All customers');
@@ -181,10 +205,10 @@ function render() {
   from.addEventListener('change', () => { fromFilter = from.value; renderTable(); });
   to.addEventListener('change', () => { toFilter = to.value; renderTable(); });
   const clear = btn('Clear filters', 'btn-ghost', () => {
-    needle = ''; statusFilter = 'all'; custFilter = ''; itemFilter = ''; fromFilter = ''; toFilter = '';
+    needle = ''; statusFilter = 'all'; custFilter = ''; itemFilter = ''; invFilter = ''; fromFilter = ''; toFilter = '';
     render();
   });
-  toolbar.append(box, sel, custSel, itemSel, el('span', 'muted', 'Dates'), from, el('span', 'muted', 'to'), to, clear,
+  toolbar.append(box, sel, invSel, custSel, itemSel, el('span', 'muted', 'Dates'), from, el('span', 'muted', 'to'), to, clear,
     el('span', 'spacer'), btn('Export to Excel', '', doExport));
   renderTable();
 }
@@ -192,9 +216,10 @@ function render() {
 const visible = () => bookings.filter((b) => (statusFilter === 'all' || b.status === statusFilter)
   && (!custFilter || b.customer_id === custFilter)
   && (!itemFilter || (lineMap.get(b.id) || new Set()).has(itemFilter))
+  && (!invFilter || (invFilter === 'none' ? (b.invoices.length === 0 && INVOICEABLE.includes(b.status)) : b.invoices.length > 0))
   && (!fromFilter || b.end_date >= fromFilter)
   && (!toFilter || b.start_date <= toFilter)
-  && (!needle || [b.booking_no, b.event_name, b.venue_name, custName(b)].some((v) => String(v || '').toLowerCase().includes(needle))));
+  && (!needle || [b.booking_no, b.event_name, b.venue_name, custName(b), invText(b)].some((v) => String(v || '').toLowerCase().includes(needle))));
 
 function rowActions(b) {
   const out = [];
@@ -202,9 +227,16 @@ function rowActions(b) {
     out.push('<button class="btn btn-sm" data-act="dispatch">Dispatch</button>');
   }
   if (CAN_BOOK && b.status === 'dispatched') out.push('<button class="btn btn-sm" data-act="return">Check in</button>');
+  if (CAN_BOOK && INVOICEABLE.includes(b.status)) out.push('<button class="btn btn-sm" data-act="invoice">Invoice</button>');
   if (CAN_CLOSE && b.status === 'returned') out.push('<button class="btn btn-sm" data-act="close">Close</button>');
   out.push('<button class="btn btn-sm" data-act="view">View</button>');
   return `<div class="row-actions">${out.join('')}</div>`;
+}
+
+function invoiceCell(b) {
+  if (b.invoices.length) return esc(invText(b));
+  if (INVOICEABLE.includes(b.status)) return '<span class="badge st-error">Not invoiced</span>';
+  return '';
 }
 
 function renderTable() {
@@ -218,10 +250,11 @@ function renderTable() {
       ${overdue(b) ? ' <span class="badge st-error">Overdue</span>' : ''}
       ${b.status === 'provisional' ? ` <span class="badge ${holdExpired(b) ? 'st-error' : ''}">${holdExpired(b) ? 'Hold expired' : `Hold to ${b.hold_until}`}</span>` : ''}
       ${b.availability_override ? ' <span class="badge st-error">Override</span>' : ''}</td>
+    <td>${invoiceCell(b)}</td>
     <td class="num">${money(b.total)}</td><td>${rowActions(b)}</td></tr>`).join('');
   panel.innerHTML = `<p class="muted">${list.length} of ${bookings.length} bookings</p>
     <div class="table-wrap"><table class="grid"><thead><tr><th>No</th><th>Event</th><th>Customer</th><th>Venue</th>
-    <th>Dates</th><th style="text-align:right">Days</th><th>Status</th><th style="text-align:right">Total</th><th></th></tr></thead>
+    <th>Dates</th><th style="text-align:right">Days</th><th>Status</th><th>Invoice</th><th style="text-align:right">Total</th><th></th></tr></thead>
     <tbody>${body}</tbody></table></div>`;
 }
 
@@ -236,6 +269,7 @@ panel.addEventListener('click', async (e) => {
     const a = t.dataset.act;
     if (a === 'dispatch') openDispatch(b);
     else if (a === 'return') openReturn(b);
+    else if (a === 'invoice') await openInvoiceDialog(b, false);
     else if (a === 'view') openViewer(b);
     else if (a === 'close') await closeBooking(b);
     return;
@@ -249,12 +283,15 @@ async function doExport() {
       name: 'Bookings', title: 'Hire bookings',
       rows: visible().map((b) => ({
         no: b.booking_no, event: b.event_name, customer: custName(b), venue: b.venue_name || '', from: b.start_date, to: b.end_date,
-        days: b.hire_days, status: STATUS[b.status], hold: b.hold_until || '', total: Number(b.total),
+        days: b.hire_days, status: STATUS[b.status], hold: b.hold_until || '', invoice: invText(b), deposit: Number(b.deposit_amount),
+        total: Number(b.total),
       })),
       columns: [
         { key: 'no', header: 'No', width: 12 }, { key: 'event', header: 'Event', width: 28 }, { key: 'customer', header: 'Customer', width: 30 },
         { key: 'venue', header: 'Venue', width: 24 }, { key: 'from', header: 'Out', width: 12 }, { key: 'to', header: 'Back', width: 12 },
         { key: 'days', header: 'Days', width: 8 }, { key: 'status', header: 'Status', width: 12 }, { key: 'hold', header: 'Hold until', width: 12 },
+        { key: 'invoice', header: 'Invoice', width: 18 },
+        { key: 'deposit', header: `Deposit requested (${base})`, width: 22 },
         { key: 'total', header: `Total (${base})`, width: 16 },
       ],
     }]);
@@ -262,9 +299,10 @@ async function doExport() {
 }
 
 async function closeBooking(b) {
+  const noInvoice = !b.invoices.length;
   const ok = await ui.confirm({
     title: `Close ${b.booking_no}`,
-    message: 'Close this booking? Check that it has been invoiced and that any damaged or missing items are dealt with.',
+    message: `${noInvoice ? 'This booking has NOT been invoiced.\n' : ''}Close this booking? Check that it has been invoiced and that any damaged or missing items are dealt with.`,
     confirmText: 'Close booking',
   });
   if (!ok) return;
@@ -272,6 +310,193 @@ async function closeBooking(b) {
   if (error) return ui.errorFrom(error);
   ui.updated('Booking');
   await refresh();
+}
+
+/* ---------- invoice from the booking ---------- */
+
+async function openInvoiceDialog(b, fromViewer) {
+  const { data, error } = await supabase.rpc('booking_invoice_suggestions', { p_booking: b.id });
+  if (error) return ui.errorFrom(error, 'Could not prepare the invoice.');
+  if (!data.length) {
+    ui.warn('Everything on this booking has already been invoiced.');
+    if (fromViewer) await reopen(b.id);
+    return;
+  }
+
+  const prevFocus = document.activeElement;
+  const backdrop = el('div', 'modal-backdrop');
+  const box = el('div', 'modal xwide');
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-modal', 'true');
+  box.append(el('h3', 'modal-title', `Invoice ${b.booking_no}`));
+  const info = el('p', 'muted', `${custName(b)} · ${b.event_name}${b.venue_name ? ` at ${b.venue_name}` : ''}\n`
+    + `Creates a draft invoice in ${base} that you can still edit, add extra lines to, and post from Invoices. `
+    + 'Hire lines come from the booking. The other lines can be adjusted here.');
+  info.style.whiteSpace = 'pre-line';
+  box.append(info);
+
+  const dateWrap = el('div', 'field');
+  dateWrap.append(el('label', '', 'Invoice date'));
+  const dateIn = el('input');
+  dateIn.type = 'date';
+  dateIn.value = todayIso();
+  dateWrap.append(dateIn);
+  box.append(dateWrap);
+
+  const wrap = el('div', 'lines-wrap');
+  const table = el('table', 'lines-table');
+  table.style.minWidth = '760px';
+  table.innerHTML = '<thead><tr><th></th><th>Type</th><th>Description</th><th style="text-align:right">Quantity</th>'
+    + '<th style="text-align:right">Price</th><th style="text-align:right">Total</th></tr></thead>';
+  const tbody = el('tbody');
+  table.append(tbody);
+  wrap.append(table);
+  box.append(wrap);
+  const totals = el('div', 'totals-bar');
+  box.append(totals);
+
+  const rows = data.map((s) => {
+    const tr = el('tr');
+    const cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = !!s.selected;
+    cb.style.width = 'auto';
+    const isHire = s.kind === 'hire';
+    const desc = el('input');
+    desc.value = s.description;
+    desc.disabled = isHire;
+    const qty = el('input');
+    qty.type = 'number';
+    qty.step = 'any';
+    qty.min = '0';
+    qty.max = String(Number(s.units));
+    qty.value = String(Number(s.quantity));
+    qty.disabled = isHire;
+    const price = el('input');
+    price.type = 'number';
+    price.step = 'any';
+    price.min = '0';
+    price.value = String(Number(s.unit_price));
+    price.disabled = isHire;
+    const total = el('td', 'num');
+    const td = (x) => { const c = el('td'); c.append(x); return c; };
+    const dtd = td(desc);
+    if (s.note) dtd.append(el('div', 'muted', s.note));
+    tr.append(td(cb), el('td', '', KIND_LABEL[s.kind]), dtd, td(qty), td(price), total);
+    tbody.append(tr);
+    [cb, qty, price].forEach((x) => x.addEventListener('input', recalc));
+    return { s, cb, desc, qty, price, total };
+  });
+
+  function recalc() {
+    let sum = 0;
+    rows.forEach((r) => {
+      const t = roundTo((Number(r.qty.value) || 0) * (Number(r.price.value) || 0), 2);
+      r.total.textContent = money(t);
+      if (r.cb.checked) sum += t;
+    });
+    totals.innerHTML = `<span class="ok">Selected lines excl. tax (${esc(base)}): ${money(sum)}</span>`;
+  }
+  recalc();
+
+  const actions = el('div', 'modal-actions');
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  const close = () => {
+    document.removeEventListener('keydown', onKey);
+    backdrop.remove();
+    if (prevFocus && prevFocus.focus) prevFocus.focus();
+  };
+  document.addEventListener('keydown', onKey);
+  const goBtn = btn('Create draft invoice', 'btn-primary', () => {});
+  actions.append(el('span', 'spacer'), btn('Cancel', 'btn-ghost', async () => { close(); if (fromViewer) await reopen(b.id); }), goBtn);
+  box.append(actions);
+  backdrop.append(box);
+  document.body.append(backdrop);
+
+  goBtn.addEventListener('click', async () => {
+    const chosen = rows.filter((r) => r.cb.checked);
+    if (!chosen.length) return ui.warn('Tick at least one line.');
+    if (!dateIn.value) return ui.warn('Enter the invoice date.');
+    const lines = [];
+    for (const r of chosen) {
+      const q = Number(r.qty.value);
+      const p = Number(r.price.value);
+      if (!(q > 0) || q > Number(r.s.units)) return ui.warn(`"${r.s.description}": the quantity must be above zero and at most ${qtyFmt(r.s.units)}.`);
+      if (!(p >= 0)) return ui.warn(`"${r.s.description}": enter a price.`);
+      lines.push({ kind: r.s.kind, hire_item_id: r.s.hire_item_id, quantity: q, unit_price: p, description: r.desc.value });
+    }
+    goBtn.disabled = true;
+    try {
+      const { error: e2 } = await supabase.rpc('create_booking_invoice', {
+        p_company: ctx.companyId, p_booking: b.id, p_date: dateIn.value, p_lines: lines,
+      });
+      if (e2) throw e2;
+      close();
+      await refresh();
+      const open = await ui.confirm({
+        title: 'Draft invoice created',
+        message: 'The draft is in Invoices, referenced with the booking number. Open Invoices to review, add any extra lines and post it?',
+        confirmText: 'Open Invoices',
+      });
+      if (open) { location.href = '/pages/invoices.html'; return; }
+      if (fromViewer) await reopen(b.id);
+    } catch (e) { ui.errorFrom(e, 'Could not create the invoice.'); goBtn.disabled = false; }
+  });
+}
+
+/* ---------- deposits ---------- */
+
+async function setDeposit(b) {
+  const saved = await ui.form({
+    title: `Deposit for ${b.booking_no}`, submitText: 'Save',
+    fields: [{ name: 'amount', label: `Deposit requested (${base})`, type: 'number', required: true, full: true,
+      hint: 'Enter 0 for no deposit. Recording the payment posts a receipt on the customer\'s account.' }],
+    values: { amount: Number(b.deposit_amount) },
+    onSubmit: async (v) => {
+      const { error } = await supabase.rpc('set_booking_deposit', { p_booking: b.id, p_amount: v.amount });
+      if (error) throw error;
+    },
+  });
+  if (saved) ui.updated('Deposit');
+  return saved;
+}
+
+async function recordDeposit(b, dep) {
+  if (!banks.length) { ui.warn('Create a bank account first: a posting account with control type Bank in the Chart of Accounts.'); return false; }
+  const left = Math.max(Number(b.deposit_amount) - Number(dep.received), 0);
+  const saved = await ui.form({
+    title: `Record deposit for ${b.booking_no}`, submitText: 'Record deposit',
+    fields: [
+      { name: 'amount', label: `Amount received (${base})`, type: 'number', required: true },
+      { name: 'date', label: 'Date received', type: 'date', required: true },
+      { name: 'bank', label: 'Received into', type: 'select', required: true, full: true,
+        options: [{ value: '', label: 'Select bank account' }].concat(banks.map((x) => ({ value: x.id, label: `${x.code} - ${x.name}` }))) },
+      { name: 'notes', label: 'Notes', full: true },
+    ],
+    values: { amount: left || '', date: todayIso(), bank: banks.length === 1 ? banks[0].id : '' },
+    onSubmit: async (v) => {
+      if (!(v.amount > 0)) throw new Error('Enter the amount.');
+      const { error } = await supabase.rpc('record_booking_deposit', {
+        p_company: ctx.companyId, p_booking: b.id, p_date: v.date, p_amount: v.amount, p_bank: v.bank, p_notes: v.notes,
+      });
+      if (error) throw error;
+    },
+  });
+  if (saved) ui.success('Deposit recorded as a receipt on the customer\'s account.');
+  return saved;
+}
+
+async function applyDeposit(b) {
+  const ok = await ui.confirm({
+    title: `Apply deposit to ${b.booking_no}`,
+    message: 'Settle this booking\'s posted invoices from the deposit received, oldest first?',
+    confirmText: 'Apply deposit',
+  });
+  if (!ok) return false;
+  const { error } = await supabase.rpc('apply_booking_deposit', { p_company: ctx.companyId, p_booking: b.id, p_date: todayIso() });
+  if (error) { ui.errorFrom(error, 'Could not apply the deposit.'); return false; }
+  ui.success('Deposit applied to the invoice.');
+  return true;
 }
 
 /* ---------- dispatch ---------- */
@@ -479,7 +704,7 @@ async function openReturn(b) {
         await ui.alert({
           title: 'Damaged or missing items',
           message: `${dmg ? `${dmg} damaged unit(s) are in the Repair Queue. ` : ''}${mis ? `${mis} missing unit(s) are in the Repair Queue. ` : ''}\n`
-            + 'Add any charges to the customer\'s invoice by hand. If you write units off, dispose of them in Fixed Assets first, then mark them written off in the Repair Queue.',
+            + 'Use Invoice on this booking to add suggested charges. If you write units off, dispose of them in Fixed Assets first, then mark them written off in the Repair Queue.',
         });
       }
       await refresh();
@@ -676,6 +901,9 @@ async function openEditor(existing) {
       });
       if (saved) { close(); ui.success('Booking cancelled.'); await refresh(); }
     }));
+    if (existing.status !== 'enquiry') {
+      actions.append(btn('Invoice and deposit', '', () => { close(); openViewer(existing); }));
+    }
   }
   const saveBtn = btn('Save booking', 'btn-primary', () => {});
   actions.append(el('span', 'spacer'), btn('Close', 'btn-ghost', close), saveBtn);
@@ -717,14 +945,19 @@ async function openEditor(existing) {
 /* ---------- viewer ---------- */
 
 async function openViewer(b) {
-  const [l, dsp, rtn] = await Promise.all([
+  const [l, dsp, rtn, inv, dep] = await Promise.all([
     supabase.from('booking_lines').select('*, hire_items(code, name)').eq('booking_id', b.id).order('line_no'),
     supabase.from('hire_dispatches').select('id, dispatch_no, dispatch_date, vehicle, driver, notes, hire_dispatch_lines(qty, hire_items(code, name))')
       .eq('booking_id', b.id).order('dispatch_date'),
     supabase.from('hire_returns').select('id, return_no, return_date, notes, hire_return_lines(qty_good, qty_damaged, qty_missing, hire_items(code, name))')
       .eq('booking_id', b.id).order('return_date'),
+    supabase.from('sales_documents').select('id, doc_no, doc_date, status, gross_total, currency_code').eq('booking_id', b.id).order('created_at'),
+    supabase.rpc('booking_deposit_status', { p_booking: b.id }),
   ]);
-  for (const r of [l, dsp, rtn]) if (r.error) return ui.errorFrom(r.error, 'Could not load the booking.');
+  for (const r of [l, dsp, rtn, inv, dep]) if (r.error) return ui.errorFrom(r.error, 'Could not load the booking.');
+  const depo = dep.data && dep.data[0] ? { requested: Number(dep.data[0].requested), received: Number(dep.data[0].received), available: Number(dep.data[0].available) }
+    : { requested: 0, received: 0, available: 0 };
+  const hasPosted = inv.data.some((d) => d.status === 'posted' && d.currency_code === base);
 
   const node = el('div');
   const info = el('p', 'muted', [
@@ -747,6 +980,19 @@ async function openViewer(b) {
     <th style="text-align:right">Damaged</th><th style="text-align:right">Missing</th></tr></thead>
     <tbody>${body}<tr><td colspan="4"><strong>Total excl. tax</strong></td><td class="num"><strong>${money(b.total)}</strong></td><td colspan="4"></td></tr></tbody></table>`;
   node.append(t);
+
+  node.append(el('h4', '', 'Invoices'));
+  const it = el('div', 'table-wrap');
+  it.innerHTML = inv.data.length
+    ? `<table class="grid"><thead><tr><th>Invoice</th><th>Date</th><th>Status</th><th style="text-align:right">Total</th></tr></thead><tbody>
+      ${inv.data.map((d) => `<tr><td>${esc(d.doc_no || 'Draft')}</td><td>${d.doc_date}</td>
+        <td><span class="badge ${d.status === 'posted' ? 'open' : ''}">${d.status === 'posted' ? 'Posted' : 'Draft'}</span></td>
+        <td class="num">${money(d.gross_total)} ${esc(d.currency_code)}</td></tr>`).join('')}</tbody></table>`
+    : `<p class="muted">${INVOICEABLE.includes(b.status) ? 'Not invoiced yet.' : 'A booking can be invoiced once it is confirmed.'}</p>`;
+  node.append(it);
+
+  node.append(el('h4', '', 'Deposit'));
+  node.append(el('p', 'muted', `Requested ${money(depo.requested)} · Received ${money(depo.received)} · Available to apply ${money(depo.available)} ${base}`));
 
   if (dsp.data.length) {
     node.append(el('h4', '', 'Dispatches'));
@@ -776,11 +1022,19 @@ async function openViewer(b) {
   }
 
   const buttons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }];
+  if (CAN_BOOK && INVOICEABLE.includes(b.status)) buttons.push({ label: 'Create invoice', value: 'invoice', className: 'btn-primary' });
+  if (CAN_BOOK && b.status !== 'cancelled' && b.status !== 'closed') buttons.push({ label: 'Set deposit', value: 'setdep', className: '' });
+  if (CAN_BOOK && DEPOSITABLE.includes(b.status)) buttons.push({ label: 'Record deposit', value: 'recdep', className: '' });
+  if (CAN_BOOK && depo.available > 0 && hasPosted) buttons.push({ label: 'Apply deposit to invoice', value: 'applydep', className: '' });
   if (CAN_BOOK && (b.status === 'confirmed' || (b.status === 'dispatched' && b.undispatched))) buttons.push({ label: 'Dispatch', value: 'dispatch', className: '' });
-  if (CAN_BOOK && b.status === 'dispatched') buttons.push({ label: 'Check in return', value: 'return', className: 'btn-primary' });
-  if (CAN_CLOSE && b.status === 'returned') buttons.push({ label: 'Close booking', value: 'closebk', className: 'btn-primary' });
+  if (CAN_BOOK && b.status === 'dispatched') buttons.push({ label: 'Check in return', value: 'return', className: '' });
+  if (CAN_CLOSE && b.status === 'returned') buttons.push({ label: 'Close booking', value: 'closebk', className: '' });
   const res = await ui.dialog({ title: b.booking_no, node, wide: true, dismissValue: 'close', buttons });
-  if (res === 'dispatch') await openDispatch(b);
+  if (res === 'invoice') await openInvoiceDialog(b, true);
+  else if (res === 'setdep') { if (await setDeposit(b)) await reopen(b.id); }
+  else if (res === 'recdep') { if (await recordDeposit(b, depo)) await reopen(b.id); }
+  else if (res === 'applydep') { if (await applyDeposit(b)) await reopen(b.id); }
+  else if (res === 'dispatch') await openDispatch(b);
   else if (res === 'return') await openReturn(b);
   else if (res === 'closebk') await closeBooking(b);
 }

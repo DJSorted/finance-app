@@ -46,6 +46,7 @@ const NAV = [
     { href: '/pages/hire-out.html', label: 'Out on Hire' },
     { href: '/pages/hire-repairs.html', label: 'Repair Queue' },
     { href: '/pages/hire-items.html', label: 'Hire Items' },
+    { href: '/pages/hire-reports.html', label: 'Hire Reports' },
   ] },
   { section: 'Sales', items: [
     { href: '/pages/invoices.html', label: 'Invoices' },
