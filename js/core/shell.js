@@ -12,6 +12,10 @@ const NAV = [
     { href: '/pages/journals.html', label: 'Journals' },
     { href: '/pages/trial-balance.html', label: 'Trial Balance' },
   ] },
+  { section: 'Reports', items: [
+    { href: '/pages/income-statement.html', label: 'Income Statement' },
+    { href: '/pages/balance-sheet.html', label: 'Balance Sheet' },
+  ] },
   { section: 'Setup', items: [
     { href: '/pages/company.html', label: 'Company Profile' },
     { href: '/pages/chart.html', label: 'Chart of Accounts' },
