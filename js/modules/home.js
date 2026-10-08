@@ -5,9 +5,8 @@ import { ui } from '../core/ui.js';
 
 const app = document.getElementById('app');
 const ctx = await startPage({ allowNoCompany: true });
-if (ctx) { if (ctx.noCompany) showCreateCompany(); else showHome(ctx); }
 
-/* ---------- company setup (unchanged) ---------- */
+/* ---------- company setup ---------- */
 
 async function showCreateCompany() {
   app.innerHTML = `
@@ -62,7 +61,7 @@ async function showCreateCompany() {
   });
 }
 
-/* ---------- dashboard ---------- */
+/* ---------- dashboard helpers ---------- */
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const num0 = (n) => Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -93,6 +92,8 @@ function delta(cur, prev) {
   const p = ((cur - prev) / Math.abs(prev)) * 100;
   return `${p >= 0 ? '+' : ''}${p.toFixed(1)}% vs same period last year`;
 }
+
+/* ---------- dashboard ---------- */
 
 async function showHome(c) {
   const cid = c.companyId;
@@ -303,6 +304,14 @@ async function showHome(c) {
         <a class="btn" href="/pages/receipts.html">Receipts</a><a class="btn" href="/pages/payments.html">Supplier payments</a>
         <a class="btn" href="/pages/journals.html">Journals</a><a class="btn" href="/pages/bookings.html">Bookings</a>
         <a class="btn" href="/pages/balance-sheet.html">Balance Sheet</a><a class="btn" href="/pages/income-statement.html">Income Statement</a>
+        <a class="btn" href="/pages/cash-flow.html">Cash Flow</a>
       </div></div>`;
   document.getElementById('dash-refresh').addEventListener('click', () => showHome(c));
+}
+
+/* ---------- start (last, so every helper above exists first) ---------- */
+
+if (ctx) {
+  if (ctx.noCompany) showCreateCompany();
+  else showHome(ctx);
 }

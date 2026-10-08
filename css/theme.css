@@ -377,3 +377,6 @@ table.report th:first-child { text-align: left; }
   .app-body { margin: 0 !important; }
   table.report td, table.report th { color: #000 !important; }
 }
+
+/* Cash flow */
+table.report tr.k-subhead td { font-weight: 600; color: var(--text-dim); padding-top: .5rem; }

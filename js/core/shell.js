@@ -15,6 +15,7 @@ const NAV = [
   { section: 'Reports', items: [
     { href: '/pages/income-statement.html', label: 'Income Statement' },
     { href: '/pages/balance-sheet.html', label: 'Balance Sheet' },
+    { href: '/pages/cash-flow.html', label: 'Cash Flow' },
   ] },
   { section: 'Setup', items: [
     { href: '/pages/company.html', label: 'Company Profile' },

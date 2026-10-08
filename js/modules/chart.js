@@ -18,6 +18,15 @@ const controlLabel = (v) => {
   return !found || found[1] === 'None' ? '' : found[1];
 };
 
+const CASH_CLASSES = [
+  ['', 'Not set (treated as operating)'], ['cash', 'Cash and bank'], ['operating', 'Operating (working capital)'],
+  ['depreciation', 'Depreciation (non-cash)'], ['investing', 'Investing'], ['financing', 'Financing'],
+];
+const cashLabel = (v) => {
+  const found = CASH_CLASSES.find((c) => c[0] === (v || ''));
+  return !found || !found[0] ? '' : found[1];
+};
+
 const panel = document.getElementById('panel');
 const toolbar = document.getElementById('toolbar');
 const hint = document.getElementById('hint');
@@ -172,7 +181,7 @@ function renderToolbar() {
   }
   toolbar.append(btn('Export to Excel', '', doExport));
   hint.textContent = tab === 'groups'
-    ? 'Groups sit under the Income Statement or Balance Sheet class, up to 4 levels deep. They control how accounts total in reports.'
+    ? 'Groups sit under the Income Statement or Balance Sheet class, up to 4 levels deep. They control how accounts total in reports. Balance sheet groups also carry a cash flow class for the cash flow statement.'
     : 'Accounts nest up to 3 levels. Only posting accounts hold transactions, and each one belongs to a group.';
 }
 
@@ -193,10 +202,11 @@ function renderGroups() {
       <td class="name">${esc(r.name)}</td>
       <td>${isRoot ? '' : (r.show_subtotal ? 'Yes' : 'No')}</td>
       <td>${isRoot ? '' : (r.collapsed_default ? 'Yes' : 'No')}</td>
+      <td>${isRoot ? '' : esc(cashLabel(r.cash_flow_class))}</td>
       <td class="num">${counts.get(r.id) || ''}</td>
       <td>${actions}</td></tr>`;
   }).join('');
-  panel.innerHTML = tableHtml(['Code', 'Name', 'Subtotal', 'Collapsed', 'Accounts', ''], body);
+  panel.innerHTML = tableHtml(['Code', 'Name', 'Subtotal', 'Collapsed', 'Cash flow', 'Accounts', ''], body);
 }
 
 function renderAccounts() {
@@ -302,15 +312,23 @@ async function openGroupForm(row, defaultParent) {
       { name: 'name', label: 'Name', required: true },
       { name: 'parent_id', label: 'Parent', type: 'select', options, required: true, full: true },
       { name: 'sort_order', label: 'Sort order', type: 'number', hint: 'Leave blank to add at the end.' },
+      { name: 'cash_flow_class', label: 'Cash flow class (balance sheet groups)', type: 'select', full: true,
+        options: CASH_CLASSES.map(([value, label]) => ({ value, label })),
+        hint: 'Used by the cash flow statement. Sub groups inherit it. Ignored for income statement groups.' },
       { name: 'show_subtotal', label: 'Show subtotal in reports', type: 'checkbox' },
       { name: 'collapsed_default', label: 'Collapsed by default', type: 'checkbox' },
       { name: 'is_active', label: 'Active', type: 'checkbox' },
     ],
-    values: row || { parent_id: defaultParent, show_subtotal: true, collapsed_default: false, is_active: true },
+    values: row
+      ? { ...row, cash_flow_class: row.cash_flow_class || '' }
+      : { parent_id: defaultParent, cash_flow_class: '', show_subtotal: true, collapsed_default: false, is_active: true },
     onSubmit: async (v) => {
+      const parent = groups.find((g) => g.id === v.parent_id);
+      const cls = isEdit ? row.class_type : (parent && parent.class_type);
       const payload = {
         code: v.code, name: v.name, parent_id: v.parent_id,
         sort_order: v.sort_order ?? nextSort(groups, v.parent_id),
+        cash_flow_class: cls === 'balance_sheet' ? (v.cash_flow_class || null) : null,
         show_subtotal: v.show_subtotal, collapsed_default: v.collapsed_default, is_active: v.is_active,
       };
       const q = isEdit
