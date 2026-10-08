@@ -53,6 +53,9 @@ const NAV = [
     { href: '/pages/hire-items.html', label: 'Hire Items' },
     { href: '/pages/hire-reports.html', label: 'Hire Reports' },
   ] },
+  { section: 'Nursery', items: [
+    { href: '/pages/nursery.html', label: 'Nursery Batches' },
+  ] },
   { section: 'Sales', items: [
     { href: '/pages/invoices.html', label: 'Invoices' },
     { href: '/pages/credit-notes.html', label: 'Credit Notes' },
