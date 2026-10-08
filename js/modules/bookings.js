@@ -76,7 +76,7 @@ function priceFor(h, qty, days, disc) {
   return roundTo(roundTo(Math.max(unit * qty, Number(h.min_charge)), 2) * (1 - (disc || 0) / 100), 2);
 }
 
-/* ---------- printing (picking list and delivery note) ---------- */
+/* ---------- printing (pick list, delivery note, return checklist) ---------- */
 
 function printHtml(title, body) {
   const f = document.createElement('iframe');
@@ -90,8 +90,10 @@ function printHtml(title, body) {
     h1{font-size:20px;margin:0 0 4px} h2{font-size:15px;margin:18px 0 6px}
     table{width:100%;border-collapse:collapse;margin-top:10px}
     th,td{border:1px solid #888;padding:6px 8px;text-align:left} th{background:#eee}
-    td.n,th.n{text-align:right} .meta{color:#444;margin:2px 0}
+    td.n,th.n{text-align:right} td.w{min-width:64px;height:30px}
+    .meta{color:#444;margin:2px 0}
     .sign{display:flex;gap:40px;margin-top:56px} .sign div{flex:1;border-top:1px solid #000;padding-top:4px}
+    .tip{color:#444;margin-top:10px;font-size:12px}
     img{max-height:60px}</style></head><body>${body}</body></html>`);
   w.onload = () => {
     w.focus();
@@ -103,20 +105,65 @@ function printHtml(title, body) {
 
 const custName = (b) => (b.customers ? `${b.customers.code} - ${b.customers.name}` : '');
 
-function noteHtml({ title, no, b, rows, picking }) {
+function docHeader(title, no) {
   const logo = logoUrl(ctx.company);
-  const head = `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px">
+  return `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px">
     <div>${logo ? `<img src="${esc(logo)}" alt=""><br>` : ''}<strong>${esc(ctx.company.name)}</strong></div>
     <div style="text-align:right"><h1>${esc(title)}</h1>${no ? `<div class="meta">${esc(no)}</div>` : ''}<div class="meta">${todayIso()}</div></div></div>`;
-  const info = `<h2>${esc(b.event_name)}</h2>
+}
+
+function bookingBlock(b) {
+  return `<h2>${esc(b.event_name)}</h2>
     <div class="meta">Booking ${esc(b.booking_no)} · ${esc(custName(b))}</div>
     <div class="meta">Venue: ${esc([b.venue_name, b.venue_address].filter(Boolean).join(', '))}</div>
     ${b.site_contact ? `<div class="meta">Site contact: ${esc(b.site_contact)}</div>` : ''}
     <div class="meta">Out ${esc(b.start_date)} · Back ${esc(b.end_date)}</div>`;
+}
+
+function noteHtml({ title, no, b, rows, picking }) {
   const table = `<table><thead><tr><th>Item</th><th class="n">Quantity</th>${picking ? '<th>Picked</th>' : ''}</tr></thead><tbody>
-    ${rows.map((r) => `<tr><td>${esc(r.label)}</td><td class="n">${qtyFmt(r.qty)}</td>${picking ? '<td></td>' : ''}</tr>`).join('')}</tbody></table>`;
+    ${rows.map((r) => `<tr><td>${esc(r.label)}</td><td class="n">${qtyFmt(r.qty)}</td>${picking ? '<td class="w"></td>' : ''}</tr>`).join('')}</tbody></table>`;
   const sign = picking ? '' : '<div class="sign"><div>Delivered by (name and signature)</div><div>Received by (name, signature and date)</div></div>';
-  return head + info + table + sign;
+  return docHeader(title, no) + bookingBlock(b) + table + sign;
+}
+
+async function fetchLines(b) {
+  const { data, error } = await supabase.from('booking_lines').select('*, hire_items(code, name)').eq('booking_id', b.id).order('line_no');
+  if (error) { ui.errorFrom(error, 'Could not load the booking lines.'); return null; }
+  return data;
+}
+
+// Optional: what is still to be picked for this booking
+async function printPickList(b) {
+  const lines = await fetchLines(b);
+  if (!lines) return;
+  const todo = lines.filter((l) => Number(l.qty) > Number(l.qty_dispatched));
+  if (!todo.length) { ui.warn('Everything on this booking has already been dispatched.'); return; }
+  const body = `${docHeader('Pick list', b.booking_no)}${bookingBlock(b)}
+    <table><thead><tr><th>Hire item</th><th class="n">Booked</th><th class="n">Already out</th><th class="n">To pick</th><th>Picked</th><th>Notes</th></tr></thead><tbody>
+    ${todo.map((l) => `<tr><td>${esc(`${l.hire_items.code} - ${l.hire_items.name}`)}</td><td class="n">${qtyFmt(l.qty)}</td>
+      <td class="n">${qtyFmt(l.qty_dispatched)}</td><td class="n"><strong>${qtyFmt(Number(l.qty) - Number(l.qty_dispatched))}</strong></td>
+      <td class="w"></td><td class="w"></td></tr>`).join('')}</tbody></table>
+    <div class="sign"><div>Picked by</div><div>Checked by</div><div>Vehicle and driver</div></div>`;
+  printHtml('Pick list', body);
+}
+
+// Optional: tick off what comes back, then capture it with Check in
+async function printReturnList(b) {
+  const lines = await fetchLines(b);
+  if (!lines) return;
+  const out = lines.map((l) => ({ l, back: Number(l.qty_good) + Number(l.qty_damaged) + Number(l.qty_missing) }))
+    .filter((x) => Number(x.l.qty_dispatched) - x.back > 0);
+  if (!out.length) { ui.warn('Nothing is still out on this booking.'); return; }
+  const body = `${docHeader('Return checklist', b.booking_no)}${bookingBlock(b)}
+    <table><thead><tr><th>Hire item</th><th class="n">Dispatched</th><th class="n">Back already</th><th class="n">Still out</th>
+    <th>Back now</th><th>Good</th><th>Damaged</th><th>Missing</th><th>Notes</th></tr></thead><tbody>
+    ${out.map(({ l, back }) => `<tr><td>${esc(`${l.hire_items.code} - ${l.hire_items.name}`)}</td><td class="n">${qtyFmt(l.qty_dispatched)}</td>
+      <td class="n">${qtyFmt(back)}</td><td class="n"><strong>${qtyFmt(Number(l.qty_dispatched) - back)}</strong></td>
+      <td class="w"></td><td class="w"></td><td class="w"></td><td class="w"></td><td class="w"></td></tr>`).join('')}</tbody></table>
+    <p class="tip">Count each item against "Still out". Record damaged and missing units in the Notes column, then capture the counts in Check in.</p>
+    <div class="sign"><div>Checked by</div><div>Received from (name and signature)</div><div>Date and time received</div></div>`;
+  printHtml('Return checklist', body);
 }
 
 /* ---------- data ---------- */
@@ -168,7 +215,7 @@ const invText = (b) => b.invoices.map((d) => d.doc_no || 'Draft').join(', ');
 
 function render() {
   document.getElementById('company-title').textContent = ctx.company.name;
-  hint.textContent = `Totals are hire charges excluding tax, in ${base}. Provisional bookings hold stock until their hold date, then release it automatically. Use the buttons on a row to dispatch, check in, invoice or close; View shows the deposit.`;
+  hint.textContent = `Totals are hire charges excluding tax, in ${base}. Provisional bookings hold stock until their hold date, then release it automatically. Use the buttons on a row to print a pick list or return checklist, dispatch, check in, invoice or close; View shows the deposit.`;
   toolbar.replaceChildren();
   if (CAN_BOOK) toolbar.append(btn('New booking', 'btn-primary', () => openEditor(null)));
   const box = el('input');
@@ -223,6 +270,8 @@ const visible = () => bookings.filter((b) => (statusFilter === 'all' || b.status
 
 function rowActions(b) {
   const out = [];
+  if (b.undispatched && (b.status === 'confirmed' || b.status === 'dispatched')) out.push('<button class="btn btn-sm" data-act="picklist">Pick list</button>');
+  if (b.status === 'dispatched') out.push('<button class="btn btn-sm" data-act="retlist">Return list</button>');
   if (CAN_BOOK && (b.status === 'confirmed' || (b.status === 'dispatched' && b.undispatched))) {
     out.push('<button class="btn btn-sm" data-act="dispatch">Dispatch</button>');
   }
@@ -269,6 +318,8 @@ panel.addEventListener('click', async (e) => {
     const a = t.dataset.act;
     if (a === 'dispatch') openDispatch(b);
     else if (a === 'return') openReturn(b);
+    else if (a === 'picklist') await printPickList(b);
+    else if (a === 'retlist') await printReturnList(b);
     else if (a === 'invoice') await openInvoiceDialog(b, false);
     else if (a === 'view') openViewer(b);
     else if (a === 'close') await closeBooking(b);
@@ -670,7 +721,8 @@ async function openReturn(b) {
   };
   document.addEventListener('keydown', onKey);
   const goBtn = btn('Check in', 'btn-primary', () => {});
-  actions.append(el('span', 'spacer'), btn('Cancel', 'btn-ghost', close), goBtn);
+  actions.append(el('span', 'spacer'), btn('Cancel', 'btn-ghost', close),
+    btn('Print checklist', '', () => printReturnList(b)), goBtn);
   box.append(actions);
   backdrop.append(box);
   document.body.append(backdrop);
@@ -1022,6 +1074,8 @@ async function openViewer(b) {
   }
 
   const buttons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }];
+  if (b.undispatched && (b.status === 'confirmed' || b.status === 'dispatched')) buttons.push({ label: 'Print pick list', value: 'picklist', className: '' });
+  if (b.status === 'dispatched') buttons.push({ label: 'Print return checklist', value: 'retlist', className: '' });
   if (CAN_BOOK && INVOICEABLE.includes(b.status)) buttons.push({ label: 'Create invoice', value: 'invoice', className: 'btn-primary' });
   if (CAN_BOOK && b.status !== 'cancelled' && b.status !== 'closed') buttons.push({ label: 'Set deposit', value: 'setdep', className: '' });
   if (CAN_BOOK && DEPOSITABLE.includes(b.status)) buttons.push({ label: 'Record deposit', value: 'recdep', className: '' });
@@ -1030,7 +1084,9 @@ async function openViewer(b) {
   if (CAN_BOOK && b.status === 'dispatched') buttons.push({ label: 'Check in return', value: 'return', className: '' });
   if (CAN_CLOSE && b.status === 'returned') buttons.push({ label: 'Close booking', value: 'closebk', className: '' });
   const res = await ui.dialog({ title: b.booking_no, node, wide: true, dismissValue: 'close', buttons });
-  if (res === 'invoice') await openInvoiceDialog(b, true);
+  if (res === 'picklist') { await printPickList(b); await reopen(b.id); }
+  else if (res === 'retlist') { await printReturnList(b); await reopen(b.id); }
+  else if (res === 'invoice') await openInvoiceDialog(b, true);
   else if (res === 'setdep') { if (await setDeposit(b)) await reopen(b.id); }
   else if (res === 'recdep') { if (await recordDeposit(b, depo)) await reopen(b.id); }
   else if (res === 'applydep') { if (await applyDeposit(b)) await reopen(b.id); }

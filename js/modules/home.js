@@ -77,6 +77,11 @@ const addYears = (s, n) => {
   if (d.getUTCMonth() !== m) d.setUTCDate(0);
   return iso(d);
 };
+function fmtBytes(n) {
+  if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(2)} GB`;
+  if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(1)} MB`;
+  return `${Math.round(n / 1024)} KB`;
+}
 const settle = (p) => Promise.resolve(p)
   .then((r) => ({ data: r.data, count: r.count, error: r.error || null }))
   .catch((e) => ({ data: null, count: null, error: e }));
@@ -118,7 +123,7 @@ async function showHome(c) {
   const count = (table, f) => settle(f(supabase.from(table).select('id', { count: 'exact', head: true }).eq('company_id', cid)));
 
   const [tb, tbPrev, monthly, sOpen, pOpen, rSales, rPurch, rStock, rGrni, rFa, outNow, upcoming, hireCount, retBk,
-    dInv, dBill, dJrn, holdExp, repair] = await Promise.all([
+    dInv, dBill, dJrn, holdExp, repair, recCounts, dbSize] = await Promise.all([
     rpc('trial_balance', { p_from: start, p_to: today }),
     rpc('trial_balance', { p_from: addYears(start, -1), p_to: addYears(today, -1) }),
     rpc('monthly_profit', { p_from: monthFrom, p_to: today }),
@@ -139,6 +144,8 @@ async function showHome(c) {
     count('journals', (q) => q.eq('status', 'draft')),
     count('bookings', (q) => q.eq('status', 'provisional').lt('hold_until', today)),
     count('hire_unavailable', (q) => q.eq('status', 'open')),
+    rpc('data_record_counts', {}),
+    settle(supabase.rpc('database_size_bytes')),
   ]);
 
   /* ----- profit and loss ----- */
@@ -285,6 +292,14 @@ async function showHome(c) {
   check('Goods received not invoiced', rGrni, (r) => Number(r.difference), '/pages/goods-received.html');
   check('Asset register and fixed asset accounts', rFa, (r) => Math.abs(Number(r.cost_diff)) + Math.abs(Number(r.accum_diff)), '/pages/fixed-assets.html');
 
+  /* ----- data ----- */
+  const totalRecords = recCounts.error || !recCounts.data ? null : recCounts.data.reduce((s, r) => s + Number(r.records), 0);
+  const dataCard = `<div class="card"><h4 style="margin-top:0">Data</h4>
+    ${totalRecords === null ? '<p class="muted">Unavailable right now.</p>'
+    : `<div class="tile-value" style="font-size:1.4rem">${num0(totalRecords)} <span class="muted" style="font-size:.9rem">records</span></div>
+       <p class="tile-sub">${dbSize.error || dbSize.data === null ? '' : `Database size ${fmtBytes(Number(dbSize.data))} (whole project)<br>`}
+       <a href="/pages/data-info.html">See where they are</a></p>`}</div>`;
+
   app.innerHTML = `
     <div class="dash-head"><div><h2>${esc(c.company.name)}</h2>
       <span class="muted">Financial year from ${esc(start)} · figures in ${esc(base)} · as at ${esc(today)}</span></div>
@@ -297,6 +312,7 @@ async function showHome(c) {
         ${attn.length ? `<ul class="attn">${attn.join('')}</ul>` : '<p class="muted">Nothing needs your attention right now.</p>'}</div>
       <div class="card"><h4 style="margin-top:0">Books health</h4>${health.join('')}
         <p class="tile-sub">Each sub-ledger is checked against its control account in the ledger.</p></div>
+      ${dataCard}
     </div>
     <div class="card"><h4 style="margin-top:0">Quick actions</h4>
       <div class="quick">

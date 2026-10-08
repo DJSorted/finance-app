@@ -23,6 +23,7 @@ const NAV = [
     { href: '/pages/reports.html', label: 'Report Layouts' },
     { href: '/pages/calendar.html', label: 'Financial Calendar' },
     { href: '/pages/currencies.html', label: 'Currencies & Rates' },
+    { href: '/pages/data-info.html', label: 'Data & Records' },
   ] },
   { section: 'Defaults', items: [
     { href: '/pages/company-settings.html', label: 'Company Defaults' },
