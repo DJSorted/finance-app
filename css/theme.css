@@ -385,3 +385,5 @@ table.report tr.k-subhead td { font-weight: 600; color: var(--text-dim); padding
 div.tile { display: block; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1rem; }
 .bar-track { height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
 .bar-track span { display: block; height: 100%; background: var(--primary); }
+/* Invitation reminder */
+.invite-bar { display: flex; align-items: center; gap: .75rem; padding: .5rem 1rem; margin-bottom: .75rem; background: var(--surface-2); border: 1px solid var(--warning); border-radius: 8px; }

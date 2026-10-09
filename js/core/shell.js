@@ -19,6 +19,7 @@ const NAV = [
   ] },
   { section: 'Setup', items: [
     { href: '/pages/company.html', label: 'Company Profile' },
+    { href: '/pages/members.html', label: 'Users' },
     { href: '/pages/chart.html', label: 'Chart of Accounts' },
     { href: '/pages/reports.html', label: 'Report Layouts' },
     { href: '/pages/calendar.html', label: 'Financial Calendar' },
@@ -123,8 +124,16 @@ export async function startPage(opts = {}) {
   catch (e) { reveal(); ui.errorFrom(e, 'Could not load your companies.'); return null; }
 
   if (!memberships.length) {
+    if (opts.allowNoCompany) {
+      // Someone who has been invited goes straight to the invitation instead of the company setup form
+      try {
+        const { data } = await supabase.rpc('my_invitations');
+        if (data && data.length) { location.href = '/pages/join.html'; return null; }
+      } catch (e) { /* carry on to company setup */ }
+      reveal();
+      return { session, noCompany: true };
+    }
     reveal();
-    if (opts.allowNoCompany) return { session, noCompany: true };
     location.href = '/';
     return null;
   }
@@ -135,6 +144,7 @@ export async function startPage(opts = {}) {
   setExportContext({ company: active.companies.name });
   const panelEl = document.getElementById('panel');
   if (panelEl && FILTER_PAGES.has(normPath(location.pathname))) watchTableFilters(panelEl);
+  showInvitationBar();
   reveal();
 
   return {
@@ -144,6 +154,21 @@ export async function startPage(opts = {}) {
     role: active.role,
     canEdit: EDIT_ROLES.includes(active.role),
   };
+}
+
+// A reminder at the top of every page when someone has invited you to another company
+function showInvitationBar() {
+  Promise.resolve(supabase.rpc('my_invitations')).then(({ data }) => {
+    if (!data || !data.length) return;
+    const main = document.querySelector('main');
+    if (!main) return;
+    const bar = h('div', 'invite-bar');
+    bar.append(h('span', '', `You have ${data.length} pending invitation${data.length === 1 ? '' : 's'} to join a company.`));
+    const a = h('a', 'btn btn-sm', 'View');
+    a.href = '/pages/join.html';
+    bar.append(a);
+    main.before(bar);
+  }).catch(() => { /* the bar is optional */ });
 }
 
 function buildShell(session, memberships, active) {
