@@ -345,6 +345,13 @@ async function init() {
   panel.append(head, ruleGrid, ruleBtns, el('h3', '', 'Items'), listEl, histEl);
 
   hint.textContent = `Tick the items to change, choose a rule and press Preview. Cost is the weighted average cost, so cost-based rules skip items with no stock cost. Prices stay in each item's own currency (${base} when blank). The old price is kept in the history.`;
+  const pre = new URLSearchParams(location.search).get('item');
+  const preItem = pre ? items.find((i) => i.id === pre) : null;
+  if (preItem) {
+    selected.add(preItem.id);
+    searchEl.value = preItem.code;
+    if (!preItem.is_active) activeChk.checked = false;
+  }
   renderList();
   renderHistory();
 }

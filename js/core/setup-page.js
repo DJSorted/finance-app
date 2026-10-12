@@ -14,10 +14,20 @@ function btn(text, cls, onClick) {
   return b;
 }
 
+function link(text, href, cls = '') {
+  const a = document.createElement('a');
+  a.className = `btn ${cls}`.trim();
+  a.textContent = text;
+  a.href = href;
+  return a;
+}
+
 // One standard list + add/edit/delete + export screen for a setup table.
 // cfg: { table, noun, plural, file, hint, orderBy, defaults, canAdd, canDelete, search,
 //        lookups(ctx), columns(lk), fields(lk, row), toForm(row, lk), validate(v, row, rows), toPayload(v, row),
-//        beforeDelete(row, rows), duplicateMessage }
+//        beforeDelete(row, rows), duplicateMessage,
+//        toolbarLinks: [{ text, href, editOnly }]       extra buttons in the toolbar that open another page
+//        rowLinks: [{ text, href(row) }] }              extra buttons on each row (shown to people who can edit)
 // Every column needs header and text(row); html(row) is optional and must escape its own output.
 export async function setupPage(ctx, cfg) {
   const toolbar = document.getElementById('toolbar');
@@ -51,6 +61,9 @@ export async function setupPage(ctx, cfg) {
   function renderToolbar() {
     toolbar.replaceChildren();
     if (canAdd) toolbar.append(btn(`Add ${cfg.noun.toLowerCase()}`, 'btn-primary', () => openForm(null)));
+    (cfg.toolbarLinks || [])
+      .filter((l) => !l.editOnly || ctx.canEdit)
+      .forEach((l) => toolbar.append(link(l.text, l.href)));
     if (cfg.search) {
       const box = document.createElement('input');
       box.type = 'search';
@@ -83,8 +96,9 @@ export async function setupPage(ctx, cfg) {
     const head = cols.map((c) => `<th${c.num ? ' style="text-align:right"' : ''}>${esc(c.header)}</th>`).join('') + '<th></th>';
     const body = list.map((r) => {
       const tds = cols.map((c) => `<td${c.num ? ' class="num"' : ''}>${c.html ? c.html(r) : esc(c.text(r))}</td>`).join('');
+      const extra = (cfg.rowLinks || []).map((l) => `<a class="btn btn-sm" href="${esc(l.href(r))}">${esc(l.text)}</a>`).join('');
       const acts = ctx.canEdit
-        ? `<div class="row-actions"><button class="btn btn-sm" data-act="edit">Edit</button>${canDelete ? '<button class="btn btn-sm" data-act="del">Delete</button>' : ''}</div>`
+        ? `<div class="row-actions">${extra}<button class="btn btn-sm" data-act="edit">Edit</button>${canDelete ? '<button class="btn btn-sm" data-act="del">Delete</button>' : ''}</div>`
         : '';
       return `<tr data-id="${r.id}" class="${r.is_active === false ? 'inactive' : ''}">${tds}<td>${acts}</td></tr>`;
     }).join('');
