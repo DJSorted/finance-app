@@ -27,6 +27,7 @@ const NAV = [
     { href: '/pages/calendar.html', label: 'Financial Calendar' },
     { href: '/pages/currencies.html', label: 'Currencies & Rates' },
     { href: '/pages/data-info.html', label: 'Data & Records' },
+    { href: '/pages/attachments.html', label: 'Attachments' },
     { href: '/pages/data-export.html', label: 'Full Data Export' },
   ] },
   { section: 'Defaults', items: [
@@ -44,6 +45,7 @@ const NAV = [
     { href: '/pages/stock-transfers.html', label: 'Stock Transfers' },
     { href: '/pages/stock-valuation.html', label: 'Stock Valuation' },
     { href: '/pages/stock-movements.html', label: 'Stock Movements' },
+    { href: '/pages/price-updates.html', label: 'Price Updates' },
   ] },
   { section: 'Fixed Assets', items: [
     { href: '/pages/fixed-assets.html', label: 'Asset Register' },

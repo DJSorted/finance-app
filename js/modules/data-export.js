@@ -23,7 +23,7 @@ const GROUPS = [
   { key: 'purchases', label: 'Purchases', tables: [
     'suppliers', 'purchase_orders', 'purchase_order_lines', 'goods_receipts', 'goods_receipt_lines', 'purchase_documents',
     'purchase_document_lines', 'supplier_payments', 'purchase_allocations', 'purchase_applications'] },
-  { key: 'inventory', label: 'Inventory', tables: ['items', 'stock_balances', 'stock_documents', 'stock_document_lines', 'stock_movements'] },
+  { key: 'inventory', label: 'Inventory', tables: ['items', 'stock_balances', 'stock_documents', 'stock_document_lines', 'stock_movements', 'price_rules', 'price_history'] },
   { key: 'assets', label: 'Fixed assets', tables: ['fixed_assets', 'asset_movements', 'depreciation_runs'] },
   { key: 'hire', label: 'Hire', tables: [
     'hire_items', 'hire_item_assets', 'bookings', 'booking_lines', 'booking_invoice_items', 'hire_dispatches', 'hire_dispatch_lines',
