@@ -58,7 +58,8 @@ async function load() {
     supabase.from('warehouses').select('id, code, name, is_default').eq('company_id', cid).eq('is_active', true).order('code'),
     supabase.from('items').select('id, code, name, units_of_measure(code), item_categories(is_purchasable)')
       .eq('company_id', cid).eq('is_active', true).in('item_type', ['stock', 'manufactured']).order('code'),
-    supabase.from('purchase_orders').select('id, po_no, supplier_id, currency_code, warehouse_id, order_date')
+    supabase.from('purchase_orders')
+      .select('id, po_no, supplier_id, currency_code, warehouse_id, order_date, purchase_order_lines(qty_ordered, qty_received)')
       .eq('company_id', cid).eq('status', 'approved').order('order_date'),
     supabase.from('company_settings').select('require_po_for_receiving').eq('company_id', cid).maybeSingle(),
     supabase.from('company_currencies').select('code, is_base, currencies(decimals)').eq('company_id', cid).order('code'),
@@ -69,7 +70,9 @@ async function load() {
   suppliers = s.data;
   warehouses = w.data;
   items = it.data.filter((x) => x.item_categories && x.item_categories.is_purchasable);
-  openOrders = po.data;
+  // only orders that still have something left to receive
+  openOrders = po.data.filter((p) => (p.purchase_order_lines || [])
+    .some((l) => Number(l.qty_ordered) - Number(l.qty_received) > 0));
   requirePo = !!(st.data && st.data.require_po_for_receiving);
   currencies = cu.data;
   base = (currencies.find((x) => x.is_base) || {}).code || '';
@@ -485,5 +488,5 @@ if (ctx) {
   document.getElementById('company-title').textContent = ctx.company.name;
   await refresh();
   const pre = new URLSearchParams(location.search).get('order');
-  if (pre && CAN_RECEIVE) await openEditor(pre);
+  if (pre && CAN_RECEIVE && openOrders.some((p) => p.id === pre)) await openEditor(pre);
 }
