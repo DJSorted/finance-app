@@ -12,6 +12,7 @@ const NAV = [
     { href: '/pages/journals.html', label: 'Journals' },
      { href: '/pages/trial-balance.html', label: 'Trial Balance' },
     { href: '/pages/general-ledger.html', label: 'General Ledger' },
+    { href: '/pages/party-ledgers.html', label: 'Debtors & Creditors Ledger' },
   ] },
   { section: 'Reports', items: [
     { href: '/pages/income-statement.html', label: 'Income Statement' },
