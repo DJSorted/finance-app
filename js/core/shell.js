@@ -27,6 +27,7 @@ const NAV = [
     { href: '/pages/calendar.html', label: 'Financial Calendar' },
     { href: '/pages/currencies.html', label: 'Currencies & Rates' },
     { href: '/pages/data-info.html', label: 'Data & Records' },
+    { href: '/pages/data-export.html', label: 'Full Data Export' },
   ] },
   { section: 'Defaults', items: [
     { href: '/pages/company-settings.html', label: 'Company Defaults' },
