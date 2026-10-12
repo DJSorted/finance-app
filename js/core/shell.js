@@ -10,7 +10,8 @@ const NAV = [
   { section: 'Overview', pinned: true, items: [{ href: '/', label: 'Home' }] },
   { section: 'Accounting', items: [
     { href: '/pages/journals.html', label: 'Journals' },
-    { href: '/pages/trial-balance.html', label: 'Trial Balance' },
+     { href: '/pages/trial-balance.html', label: 'Trial Balance' },
+    { href: '/pages/general-ledger.html', label: 'General Ledger' },
   ] },
   { section: 'Reports', items: [
     { href: '/pages/income-statement.html', label: 'Income Statement' },
