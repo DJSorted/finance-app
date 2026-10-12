@@ -14,7 +14,10 @@ const CAN_WORK = ctx ? ['owner', 'admin', 'accountant', 'clerk'].includes(ctx.ro
 const CAN_BOOKS = ctx ? ctx.canEdit : false;
 const STATUS = { growing: 'Growing', partly_released: 'Partly released', closed: 'Closed', written_off: 'Written off' };
 const ACTIVE = ['growing', 'partly_released'];
-const KIND = { material: 'Materials', labour: 'Labour', overhead: 'Overheads', other: 'Other costs', release: 'Released to stock', write_off: 'Written off' };
+const KIND = {
+  material: 'Materials', labour: 'Labour', overhead: 'Overheads', other: 'Other costs', release: 'Released to stock', write_off: 'Written off',
+  split_out: 'Moved to another batch', split_in: 'Moved from another batch',
+};
 const STAGES = ['Germinated', 'Pricked out', 'Potted on', 'Hardened off', 'Ready to sell'];
 
 let tab = 'batches';
@@ -100,19 +103,25 @@ async function reopen(id) {
 
 /* ---------- page ---------- */
 
+function renderTab() {
+  if (tab === 'batches') renderBatches();
+  else if (tab === 'stock') renderStock();
+  else renderReady();
+}
+
 function render() {
   document.getElementById('company-title').textContent = ctx.company.name;
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === tab));
   toolbar.replaceChildren();
   if (tab === 'batches') {
-    if (CAN_WORK) toolbar.append(btn('New batch', 'btn-primary', openNewBatch));
+    if (CAN_WORK) toolbar.append(btn('New batch', 'btn-primary', openNewBatch), btn('Bought-in plants', '', startBoughtIn));
     if (CAN_BOOKS) toolbar.append(btn('Allocate overhead', '', openAllocate));
     const sel = el('select', 'compact');
     [['active', 'Growing'], ['all', 'All'], ['closed', 'Closed'], ['written_off', 'Written off']].forEach(([v, l]) => option(sel, v, l));
     sel.value = statusFilter;
     sel.addEventListener('change', () => { statusFilter = sel.value; renderBatches(); });
     toolbar.append(sel);
-  } else {
+  } else if (tab === 'stock') {
     const cb = el('input');
     cb.type = 'checkbox';
     cb.checked = showEmpty;
@@ -128,18 +137,22 @@ function render() {
   option(vsel, '', 'All varieties');
   items.filter((i) => i.item_type === 'manufactured' && !i.nursery_batch_id).forEach((i) => option(vsel, i.id, `${i.code} - ${i.name}`));
   vsel.value = varietyFilter;
-  vsel.addEventListener('change', () => { varietyFilter = vsel.value; if (tab === 'batches') renderBatches(); else renderStock(); });
+  vsel.addEventListener('change', () => { varietyFilter = vsel.value; renderTab(); });
   const box = el('input');
   box.type = 'search';
   box.placeholder = 'Search';
   box.value = needle;
   box.style.maxWidth = '200px';
-  box.addEventListener('input', () => { needle = box.value.trim().toLowerCase(); if (tab === 'batches') renderBatches(); else renderStock(); });
+  box.addEventListener('input', () => { needle = box.value.trim().toLowerCase(); renderTab(); });
   toolbar.append(vsel, box, el('span', 'spacer'), btn('Export to Excel', '', doExport));
 
-  hint.textContent = tab === 'batches'
-    ? `Each batch carries its own work in progress cost, in ${base}. Click a batch to add costs, record losses and release plants to stock.`
-    : 'Plants released to stock, one stock item per batch, so each keeps its own cost and age. Sell the oldest batches first by choosing that batch\'s item on the invoice.';
+  if (tab === 'batches') {
+    hint.textContent = `Each batch carries its own work in progress cost, in ${base}. Click a batch to add costs, record losses, split it and release plants to stock.`;
+  } else if (tab === 'stock') {
+    hint.textContent = 'Plants released to stock, one stock item per batch, so each keeps its own cost and age. Sell the oldest batches first by choosing that batch\'s item on the invoice.';
+  } else {
+    hint.textContent = 'Growing plants by the month they are expected to be ready, from each batch\'s expected ready date. Click a batch to set or change its date. Plants already released are shown as in stock.';
+  }
   note.innerHTML = '';
   if (recon) {
     const diff = Number(recon.difference);
@@ -148,7 +161,7 @@ function render() {
       : `Batch work in progress differs from the WIP control account by ${money(diff)}`}</span>
       <span class="muted">Batches ${money(recon.subledger)} · ledger ${money(recon.ledger)}</span></p>`;
   }
-  if (tab === 'batches') renderBatches(); else renderStock();
+  renderTab();
 }
 
 document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => { tab = t.dataset.tab; render(); }));
@@ -227,6 +240,83 @@ function renderStock() {
     <td class="num">${money(val)}</td><td colspan="2"></td></tr></tbody></table></div>`;
 }
 
+/* ---------- ready to sell tab ---------- */
+
+function readyPlan() {
+  const today = todayIso();
+  const now = new Date();
+  const months = [];
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + i, 1));
+    months.push({ key: d.toISOString().slice(0, 7), label: d.toLocaleDateString(undefined, { month: 'short', year: '2-digit', timeZone: 'UTC' }) });
+  }
+  const cols = [{ key: 'now', label: 'Ready now' }, ...months, { key: 'later', label: 'Later' }, { key: 'none', label: 'No date' }];
+  const keys = new Set(cols.map((c) => c.key));
+  const bucketOf = (b) => {
+    if (!b.expected_ready) return 'none';
+    if (b.expected_ready <= today) return 'now';
+    const k = b.expected_ready.slice(0, 7);
+    return keys.has(k) ? k : 'later';
+  };
+  const growing = batches.filter((b) => ACTIVE.includes(b.status) && Number(b.qty_alive) > 0
+    && (!varietyFilter || b.item_id === varietyFilter)
+    && (!needle || [b.batch_no, b.name, b.location, b.stage, (varietyOf(b) || {}).name].some((v) => String(v || '').toLowerCase().includes(needle))));
+  const stock = new Map();
+  items.filter((i) => i.nursery_batch_id).forEach((i) => {
+    const pb = batchMap.get(i.nursery_batch_id);
+    if (!pb || (varietyFilter && pb.item_id !== varietyFilter)) return;
+    const q = (i.stock_balances || []).reduce((s, x) => s + Number(x.qty_on_hand), 0);
+    if (q > 0) stock.set(pb.item_id, (stock.get(pb.item_id) || 0) + q);
+  });
+  const varieties = new Map();
+  const row = (id) => {
+    if (!varieties.has(id)) { const v = itemMap.get(id); varieties.set(id, { name: v ? v.name : '', instock: stock.get(id) || 0, cells: {}, total: 0 }); }
+    return varieties.get(id);
+  };
+  stock.forEach((_, id) => row(id));
+  growing.forEach((b) => {
+    const r = row(b.item_id);
+    const k = bucketOf(b);
+    r.cells[k] = (r.cells[k] || 0) + Number(b.qty_alive);
+    r.total += Number(b.qty_alive);
+  });
+  const rows = [...varieties.values()].sort((a, b) => a.name.localeCompare(b.name));
+  growing.sort((a, b) => (a.expected_ready || '9999').localeCompare(b.expected_ready || '9999') || a.batch_no.localeCompare(b.batch_no));
+  return { cols, bucketOf, growing, rows };
+}
+
+function renderReady() {
+  const { cols, bucketOf, growing, rows } = readyPlan();
+  if (!rows.length) { panel.innerHTML = '<p class="muted">No plants are growing or in stock yet.</p>'; return; }
+  const cell = (n, strong) => (n ? `<td class="num">${strong ? `<strong>${qtyFmt(n)}</strong>` : qtyFmt(n)}</td>` : '<td></td>');
+  const tot = {};
+  let totStock = 0;
+  let totAll = 0;
+  rows.forEach((r) => {
+    totStock += r.instock; totAll += r.total;
+    Object.entries(r.cells).forEach(([k, v]) => { tot[k] = (tot[k] || 0) + v; });
+  });
+  const matrix = rows.map((r) => `<tr><td>${esc(r.name)}</td>${cell(r.instock)}${cols.map((c) => cell(r.cells[c.key], c.key === 'now')).join('')}${cell(r.total, true)}</tr>`).join('');
+  const head = `<th>Variety</th><th style="text-align:right">In stock now</th>${cols.map((c) => `<th style="text-align:right">${esc(c.label)}</th>`).join('')}<th style="text-align:right">Growing total</th>`;
+
+  const detail = cols.map((c) => {
+    const list = growing.filter((b) => bucketOf(b) === c.key);
+    if (!list.length) return '';
+    const sub = list.reduce((s, b) => s + Number(b.qty_alive), 0);
+    return `<tr class="row-parent"><td colspan="7"><strong>${esc(c.label)}</strong> · ${qtyFmt(sub)} plants</td></tr>${list.map((b) => {
+      const v = varietyOf(b);
+      return `<tr class="clickable" data-id="${b.id}"><td>${esc(b.batch_no)}</td><td>${esc(b.name)}</td><td>${esc(v ? v.name : '')}</td>
+        <td>${b.expected_ready || ''}</td><td class="num">${qtyFmt(b.qty_alive)}</td><td>${esc(b.stage || '')}</td><td>${esc(b.location || '')}</td></tr>`;
+    }).join('')}`;
+  }).join('');
+
+  panel.innerHTML = `<div class="table-wrap"><table class="grid"><thead><tr>${head}</tr></thead><tbody>${matrix}
+    <tr class="row-root"><td>Total</td>${cell(totStock)}${cols.map((c) => cell(tot[c.key])).join('')}${cell(totAll)}</tr></tbody></table></div>
+    <h3 style="margin-top:1.2rem">Batches by expected ready date</h3>
+    <div class="table-wrap"><table class="grid"><thead><tr><th>Batch</th><th>Name</th><th>Variety</th><th>Expected ready</th>
+    <th style="text-align:right">Growing</th><th>Stage</th><th>Location</th></tr></thead><tbody>${detail}</tbody></table></div>`;
+}
+
 /* ---------- export ---------- */
 
 async function doExport() {
@@ -250,7 +340,7 @@ async function doExport() {
           { key: 'stage', header: 'Stage', width: 16 }, { key: 'ready', header: 'Expected ready', width: 14 }, { key: 'status', header: 'Status', width: 14 },
         ],
       }]);
-    } else {
+    } else if (tab === 'stock') {
       const rows = stockRows();
       if (!rows.length) return ui.warn('There is nothing to export.');
       await exportSheets(`plant-stock-${todayIso()}.xlsx`, [{
@@ -268,6 +358,33 @@ async function doExport() {
           { key: 'price', header: 'Sales price', width: 12, total: false }, { key: 'margin', header: 'Margin %', width: 11, format: '0', total: false },
         ],
       }]);
+    } else {
+      const { cols, bucketOf, growing, rows } = readyPlan();
+      if (!rows.length) return ui.warn('There is nothing to export.');
+      const label = Object.fromEntries(cols.map((c) => [c.key, c.label]));
+      await exportSheets(`ready-to-sell-${todayIso()}.xlsx`, [
+        {
+          name: 'By month', title: 'Plants ready to sell, by month', subtitle: `As at ${todayIso()}`,
+          rows: rows.map((r) => ({ variety: r.name, instock: r.instock || '', ...Object.fromEntries(cols.map((c) => [`k_${c.key}`, r.cells[c.key] || ''])), total: r.total })),
+          columns: [
+            { key: 'variety', header: 'Variety', width: 28 }, { key: 'instock', header: 'In stock now', width: 13, total: true },
+            ...cols.map((c) => ({ key: `k_${c.key}`, header: c.label, width: 11, total: true })),
+            { key: 'total', header: 'Growing total', width: 14, total: true },
+          ],
+        },
+        {
+          name: 'Batches', title: 'Growing batches by expected ready date', subtitle: `As at ${todayIso()}`,
+          rows: growing.map((b) => ({
+            when: label[bucketOf(b)], batch: b.batch_no, name: b.name, variety: (varietyOf(b) || {}).name || '',
+            ready: b.expected_ready || '', qty: Number(b.qty_alive), stage: b.stage || '', location: b.location || '',
+          })),
+          columns: [
+            { key: 'when', header: 'When', width: 12 }, { key: 'batch', header: 'Batch', width: 12 }, { key: 'name', header: 'Name', width: 26 },
+            { key: 'variety', header: 'Variety', width: 26 }, { key: 'ready', header: 'Expected ready', width: 14 },
+            { key: 'qty', header: 'Growing', width: 11, total: true }, { key: 'stage', header: 'Stage', width: 16 }, { key: 'location', header: 'Location', width: 18 },
+          ],
+        },
+      ]);
     }
   } catch (e) { ui.errorFrom(e, 'Could not export.'); }
 }
@@ -304,6 +421,53 @@ async function openNewBatch() {
   if (saved) { ui.created('Batch'); await refresh(); }
 }
 
+/* ---------- bought-in plants: batch and cost in one step ---------- */
+
+async function startBoughtIn() {
+  const varieties = items.filter((i) => i.item_type === 'manufactured' && !i.nursery_batch_id && i.is_active);
+  if (!varieties.length) {
+    return ui.warn('Create a plant item first: an item in a Manufactured category (with a work in progress account) for each variety.');
+  }
+  const stockItems = items.filter((i) => i.item_type !== 'service' && !i.nursery_batch_id && i.is_active);
+  const saved = await ui.form({
+    title: 'Start a batch from bought-in plants', submitText: 'Start batch',
+    fields: [
+      { name: 'name', label: 'Batch name', required: true, full: true, hint: 'For example "Lavender liners Oct-26".' },
+      { name: 'item', label: 'Variety grown on', type: 'select', required: true, full: true,
+        options: [{ value: '', label: 'Select a variety' }].concat(varieties.map((i) => ({ value: i.id, label: `${i.code} - ${i.name}` }))) },
+      { name: 'date', label: 'Date bought', type: 'date', required: true, hint: 'Age is counted from this date.' },
+      { name: 'qty', label: 'Number of plants', type: 'number', required: true },
+      { name: 'expected', label: 'Expected ready', type: 'date' },
+      { name: 'location', label: 'Location (bed, tunnel)' },
+      { name: 'source', label: 'The cost comes from', type: 'select', required: true, full: true,
+        options: [{ value: 'stock', label: 'Plants already received into stock' }, { value: 'expense', label: 'An expense account (the bill was posted as an expense)' }] },
+      { name: 'stock_item', label: 'Stock item bought (if from stock)', type: 'select', full: true,
+        options: [{ value: '', label: 'Select a stock item' }].concat(stockItems.map((i) => ({ value: i.id, label: `${i.code} - ${i.name}` }))) },
+      { name: 'wh', label: 'From warehouse (if from stock)', type: 'select', options: whOptions() },
+      { name: 'stock_qty', label: 'Quantity taken from stock', type: 'number', hint: 'Leave blank to take one for each plant. Taken at the average cost.' },
+      { name: 'amount', label: `Cost of the plants (${base}) (if from an expense)`, type: 'number' },
+      { name: 'credit', label: 'Capitalise from account (if from an expense)', type: 'select', full: true, options: acctOptions(),
+        hint: 'The expense account the bill was posted to. It is credited, so profit is not counted twice.' },
+      { name: 'notes', label: 'Notes', full: true },
+    ],
+    values: { date: todayIso(), source: 'stock', wh: defaultWh(), credit: lastCredit() },
+    onSubmit: async (v) => {
+      if (!(v.qty >= 1) || v.qty !== Math.round(v.qty)) throw new Error('Enter the number of plants as a whole number.');
+      if (v.source === 'stock' && !v.stock_item) throw new Error('Choose the stock item that was bought.');
+      if (v.source === 'expense' && !(v.amount > 0)) throw new Error('Enter the cost of the plants.');
+      if (v.source === 'expense' && !v.credit) throw new Error('Choose the account to capitalise from.');
+      await rpcGo('nursery_start_bought_in', {
+        p_name: v.name, p_item: v.item, p_date: v.date, p_qty: v.qty, p_expected: v.expected || null, p_location: v.location, p_notes: v.notes,
+        p_source: v.source, p_stock_item: v.source === 'stock' ? v.stock_item : null, p_wh: v.source === 'stock' ? v.wh : null,
+        p_stock_qty: v.source === 'stock' && v.stock_qty ? v.stock_qty : null,
+        p_amount: v.source === 'expense' ? v.amount : null, p_credit: v.source === 'expense' ? v.credit : null, p_desc: v.notes,
+      });
+      if (v.source === 'expense') rememberCredit(v.credit);
+    },
+  });
+  if (saved) { ui.created('Batch'); await refresh(); }
+}
+
 /* ---------- batch view ---------- */
 
 async function openBatch(b) {
@@ -315,6 +479,7 @@ async function openBatch(b) {
   for (const r of [cs, ev]) if (r.error) return ui.errorFrom(r.error, 'Could not load the batch.');
   const v = varietyOf(b);
   const bi = b.batch_item_id ? itemMap.get(b.batch_item_id) : null;
+  const parent = b.split_from ? batchMap.get(b.split_from) : null;
   const sums = {};
   cs.data.forEach((c) => { sums[c.kind] = (sums[c.kind] || 0) + Number(c.amount); });
   const active = ACTIVE.includes(b.status);
@@ -324,8 +489,9 @@ async function openBatch(b) {
     `${v ? `${v.code} - ${v.name}` : ''} · ${STATUS[b.status]}`,
     `Sown ${b.sown_date} (${ageText(b.sown_date)})${b.expected_ready ? ` · expected ready ${b.expected_ready}` : ''}${b.location ? ` · ${b.location}` : ''}`,
     `Stage: ${b.stage || '-'}`,
-    `Started ${qtyFmt(b.qty_start)} · growing ${qtyFmt(b.qty_alive)} · lost ${qtyFmt(b.qty_lost)} · released ${qtyFmt(b.qty_released)}`,
+    `Started ${qtyFmt(b.qty_start)} · growing ${qtyFmt(b.qty_alive)} · lost ${qtyFmt(b.qty_lost)} · released ${qtyFmt(b.qty_released)}${Number(b.qty_split_out) > 0 ? ` · split out ${qtyFmt(b.qty_split_out)}` : ''}`,
     `Work in progress ${money(b.wip_balance)} ${base}${Number(b.qty_alive) > 0 ? ` · ${money(perPlant(b))} per growing plant` : ''}`,
+    b.split_from ? `Split from ${parent ? parent.batch_no : 'another batch'}` : '',
     bi ? `Stock item for released plants: ${bi.code}` : '', b.notes ? `Notes: ${b.notes}` : '',
   ].filter(Boolean).join('\n'));
   info.style.whiteSpace = 'pre-line';
@@ -350,7 +516,7 @@ async function openBatch(b) {
 
   node.append(el('h4', '', 'Stages, losses and releases'));
   const t2 = el('div', 'table-wrap');
-  const EV = { stage: 'Stage', loss: 'Loss', release: 'Released', write_off: 'Written off' };
+  const EV = { stage: 'Stage', loss: 'Loss', release: 'Released', write_off: 'Written off', split: 'Split' };
   t2.innerHTML = `<table class="grid"><thead><tr><th>Date</th><th>Event</th><th style="text-align:right">Plants</th><th style="text-align:right">Cost</th><th>Note</th></tr></thead><tbody>
     ${ev.data.map((e) => `<tr><td>${e.event_date}</td><td>${EV[e.kind]}</td><td class="num">${Number(e.qty) ? qtyFmt(e.qty) : ''}</td>
     <td class="num">${Number(e.value) ? money(e.value) : ''}</td><td>${esc(e.note || '')}</td></tr>`).join('')}</tbody></table>`;
@@ -358,7 +524,8 @@ async function openBatch(b) {
 
   const buttons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }];
   if (active && CAN_WORK) buttons.push({ label: 'Add materials', value: 'material', className: '' }, { label: 'Add labour or cost', value: 'cost', className: '' },
-    { label: 'Record loss', value: 'loss', className: '' }, { label: 'Set stage', value: 'stage', className: '' });
+    { label: 'Record loss', value: 'loss', className: '' }, { label: 'Set stage', value: 'stage', className: '' },
+    { label: 'Set ready date', value: 'ready', className: '' }, { label: 'Split batch', value: 'split', className: '' });
   if (active && CAN_BOOKS) buttons.push({ label: 'Release to stock', value: 'release', className: 'btn-primary' }, { label: 'Write off', value: 'writeoff', className: 'btn-danger' });
   const res = await ui.dialog({ title: `${b.batch_no} - ${b.name}`, node, wide: true, dismissValue: 'close', buttons });
   const done = async (p) => { if (await p) await reopen(b.id); };
@@ -366,6 +533,8 @@ async function openBatch(b) {
   else if (res === 'cost') await done(addCost(b));
   else if (res === 'loss') await done(recordLoss(b));
   else if (res === 'stage') await done(setStage(b));
+  else if (res === 'ready') await done(setReadyDate(b));
+  else if (res === 'split') await done(splitBatch(b));
   else if (res === 'release') await done(release(b));
   else if (res === 'writeoff') await done(writeOff(b));
 }
@@ -454,6 +623,39 @@ async function setStage(b) {
     },
   });
   if (saved) ui.updated('Batch');
+  return saved;
+}
+
+async function setReadyDate(b) {
+  const saved = await ui.form({
+    title: `Expected ready date for ${b.batch_no}`, submitText: 'Save date',
+    fields: [{ name: 'date', label: 'Expected ready', type: 'date', full: true, hint: 'Leave blank to clear it. The Ready to sell tab is built from these dates.' }],
+    values: { date: b.expected_ready || '' },
+    onSubmit: async (v) => { await rpcGo('nursery_set_ready_date', { p_batch: b.id, p_date: v.date || null }); },
+  });
+  if (saved) ui.updated('Batch');
+  return saved;
+}
+
+async function splitBatch(b) {
+  if (Number(b.qty_alive) < 2) { ui.warn('A batch needs at least 2 growing plants to be split.'); return false; }
+  const saved = await ui.form({
+    title: `Split ${b.batch_no}`, submitText: 'Split batch',
+    fields: [
+      { name: 'qty', label: 'Plants to move to the new batch', type: 'number', required: true,
+        hint: `From 1 to ${qtyFmt(Number(b.qty_alive) - 1)}. They take their share of the cost, ${money(perPlant(b))} ${base} per plant now.` },
+      { name: 'name', label: 'New batch name', full: true, hint: 'Leave blank to use the old name with "(split)". The new batch keeps the sowing date, stage and ready date.' },
+      { name: 'location', label: 'New location' },
+      { name: 'date', label: 'Date', type: 'date', required: true },
+      { name: 'note', label: 'Reason', full: true },
+    ],
+    values: { date: todayIso(), location: b.location || '' },
+    onSubmit: async (v) => {
+      if (!(v.qty >= 1) || v.qty !== Math.round(v.qty)) throw new Error('Enter a whole number of plants.');
+      await rpcGo('nursery_split_batch', { p_batch: b.id, p_date: v.date, p_qty: v.qty, p_name: v.name || null, p_location: v.location || null, p_note: v.note || null });
+    },
+  });
+  if (saved) ui.success('Batch split.');
   return saved;
 }
 
