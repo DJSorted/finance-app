@@ -123,7 +123,7 @@ async function showHome(c) {
   const count = (table, f) => settle(f(supabase.from(table).select('id', { count: 'exact', head: true }).eq('company_id', cid)));
 
   const [tb, tbPrev, monthly, sOpen, pOpen, rSales, rPurch, rStock, rGrni, rFa, outNow, upcoming, hireCount, retBk,
-    dInv, dBill, dJrn, holdExp, repair, recCounts, dbSize, nurBatches, rNur] = await Promise.all([
+    dInv, dBill, dJrn, holdExp, repair, recCounts, dbSize, nurBatches, rNur, woOpen, rMfg] = await Promise.all([
     rpc('trial_balance', { p_from: start, p_to: today }),
     rpc('trial_balance', { p_from: addYears(start, -1), p_to: addYears(today, -1) }),
     rpc('monthly_profit', { p_from: monthFrom, p_to: today }),
@@ -149,6 +149,9 @@ async function showHome(c) {
     settle(supabase.from('nursery_batches').select('qty_alive, wip_balance, expected_ready')
       .eq('company_id', cid).in('status', ['growing', 'partly_released']).limit(1000)),
     rpc('nursery_reconciliation', { p_as_of: today }),
+    settle(supabase.from('work_orders').select('qty_planned, qty_received, wip_balance, due_date')
+      .eq('company_id', cid).eq('status', 'open').limit(1000)),
+    rpc('manufacturing_reconciliation', { p_as_of: today }),
   ]);
 
   /* ----- profit and loss ----- */
@@ -260,6 +263,20 @@ async function showHome(c) {
     }));
   }
 
+  /* ----- production ----- */
+  const wo = woOpen.error || !woOpen.data ? [] : woOpen.data;
+  const mfgRec = rMfg.error || !rMfg.data || !rMfg.data[0] ? null : rMfg.data[0];
+  const woLate = wo.filter((o) => o.due_date && o.due_date < today).length;
+  const mfgUsed = wo.length > 0 || (mfgRec && (Number(mfgRec.subledger) !== 0 || Number(mfgRec.ledger) !== 0));
+  if (mfgUsed) {
+    const wipVal = mfgRec ? Number(mfgRec.subledger) : wo.reduce((s, o) => s + Number(o.wip_balance), 0);
+    t2.push(tile({
+      label: 'Production work in progress', value: num0(wipVal), href: '/pages/work-orders.html',
+      sub: `${esc(base)} · ${wo.length} open order${wo.length === 1 ? '' : 's'}`
+        + `${woLate ? `<br><span style="color:var(--danger)">${woLate} overdue</span>` : ''}`,
+    }));
+  }
+
   /* ----- monthly chart ----- */
   const months = [];
   const mm = D(monthFrom);
@@ -292,6 +309,7 @@ async function showHome(c) {
   add(lateBookings, 'Hire bookings overdue back', '/pages/hire-out.html');
   add(repair.count || 0, 'Hire repair queue entries open', '/pages/hire-repairs.html');
   add(nurReadyNow, 'Nursery batches ready to sell', '/pages/nursery.html');
+  add(woLate, 'Production orders past their due date', '/pages/work-orders.html');
   if (hireCount.count > 0) {
     const unbilled = (retBk.data || []).filter((b) => !(b.sales_documents || []).length).length;
     add(unbilled, 'Returned hire bookings not invoiced', '/pages/bookings.html');
@@ -311,6 +329,7 @@ async function showHome(c) {
   check('Goods received not invoiced', rGrni, (r) => Number(r.difference), '/pages/goods-received.html');
   check('Asset register and fixed asset accounts', rFa, (r) => Math.abs(Number(r.cost_diff)) + Math.abs(Number(r.accum_diff)), '/pages/fixed-assets.html');
   if (nurUsed) check('Nursery batches and WIP control account', rNur, (r) => Number(r.difference), '/pages/nursery.html');
+  if (mfgUsed) check('Production orders and WIP control account', rMfg, (r) => Number(r.difference), '/pages/work-orders.html');
 
   /* ----- data ----- */
   const totalRecords = recCounts.error || !recCounts.data ? null : recCounts.data.reduce((s, r) => s + Number(r.records), 0);

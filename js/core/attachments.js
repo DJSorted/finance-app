@@ -15,7 +15,7 @@ export const TABLE_LABELS = {
   journals: 'Journal', sales_documents: 'Invoice / credit note', customer_receipts: 'Receipt', customers: 'Customer',
   purchase_documents: 'Bill / supplier credit note', supplier_payments: 'Supplier payment', suppliers: 'Supplier',
   purchase_orders: 'Purchase order', goods_receipts: 'Goods received', items: 'Item', fixed_assets: 'Fixed asset',
-  bookings: 'Booking', nursery_batches: 'Nursery batch',
+  bookings: 'Booking', nursery_batches: 'Nursery batch', work_orders: 'Work order',
 };
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));

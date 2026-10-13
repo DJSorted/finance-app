@@ -47,6 +47,10 @@ const NAV = [
     { href: '/pages/stock-movements.html', label: 'Stock Movements' },
     { href: '/pages/price-updates.html', label: 'Price Updates' },
   ] },
+  { section: 'Manufacturing', items: [
+    { href: '/pages/boms.html', label: 'Bills of Materials' },
+    { href: '/pages/work-orders.html', label: 'Work Orders' },
+  ] },
   { section: 'Fixed Assets', items: [
     { href: '/pages/fixed-assets.html', label: 'Asset Register' },
     { href: '/pages/depreciation.html', label: 'Depreciation' },
