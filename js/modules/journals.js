@@ -2,6 +2,7 @@ import { supabase } from '../core/supabase.js';
 import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
+import { openAttachmentsDialog } from '../core/attachments.js';
 
 const ctx = await startPage();
 
@@ -326,7 +327,17 @@ async function openEditor(existing) {
     });
     actions.append(delBtn);
   }
-  actions.append(el('span', 'spacer'), btn('Cancel', 'btn-ghost', close));
+  const attBtn = btn('Attachments', 'btn-ghost', async () => {
+    try {
+      if (!journalId) {
+        await persist();
+        ui.success('Saved as a draft so files can be attached.');
+        await refresh();
+      }
+      await openAttachmentsDialog(ctx, { table: 'journals', recordId: journalId, title: 'Attachments: draft journal' });
+    } catch (e) { ui.errorFrom(e, 'Could not open the attachments.'); }
+  });
+  actions.append(attBtn, el('span', 'spacer'), btn('Cancel', 'btn-ghost', close));
   const saveBtn = btn('Save draft', CAN_POST ? '' : 'btn-primary', () => {});
   actions.append(saveBtn);
   const postBtn = CAN_POST ? btn('Post', 'btn-primary', () => {}) : null;
@@ -450,9 +461,13 @@ async function openViewer(j) {
   node.append(tableWrap);
 
   const buttons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }];
+  if (j.source_type === 'manual') buttons.push({ label: 'Attachments', value: 'attach', className: 'btn-ghost' });
   if (CAN_POST && !j.reversed_by && !j.reversal_of && j.source_type === 'manual') buttons.push({ label: 'Reverse', value: 'reverse', className: 'btn-danger' });
   const res = await ui.dialog({ title: `Journal ${j.journal_no}`, node, buttons, dismissValue: 'close', wide: true });
-  if (res === 'reverse') await reverseJournal(j);
+  if (res === 'attach') {
+    await openAttachmentsDialog(ctx, { table: 'journals', recordId: j.id, title: `Attachments: ${j.journal_no}` });
+    await openViewer(j);
+  } else if (res === 'reverse') await reverseJournal(j);
 }
 
 async function reverseJournal(j) {

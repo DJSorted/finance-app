@@ -2,6 +2,7 @@ import { supabase } from '../core/supabase.js';
 import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
+import { openAttachmentsDialog } from '../core/attachments.js';
 
 const ctx = await startPage();
 
@@ -210,12 +211,16 @@ async function openViewer(assetId) {
     <tbody>${body}</tbody></table>`;
   node.append(t);
 
-  const buttons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }];
+  const buttons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }, { label: 'Attachments', value: 'attach', className: 'btn-ghost' }];
   if (CAN_EDIT) buttons.push({ label: 'Edit details', value: 'edit', className: '' });
   if (CAN_EDIT && x.status === 'active' && Number(x.quantity) > 0) {
     buttons.push({ label: 'Dispose / write off', value: 'dispose', className: 'btn-danger' });
   }
   const res = await ui.dialog({ title: `${x.asset_no} - ${x.name}`, node, buttons, dismissValue: 'close', wide: true });
+  if (res === 'attach') {
+    await openAttachmentsDialog(ctx, { table: 'fixed_assets', recordId: x.id, title: `Attachments: ${x.asset_no}` });
+    await openViewer(assetId);
+  }
   if (res === 'edit') await editDetails(x);
   if (res === 'dispose') await disposeAsset(x);
 }
