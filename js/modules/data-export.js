@@ -30,6 +30,7 @@ const GROUPS = [
     'hire_returns', 'hire_return_lines', 'hire_unavailable', 'hire_unavailable_events'] },
   { key: 'nursery', label: 'Nursery', tables: ['nursery_batches', 'nursery_costs', 'nursery_events', 'nursery_bill_allocations'] },
   { key: 'manufacturing', label: 'Manufacturing', tables: ['boms', 'bom_lines', 'work_orders', 'work_order_lines', 'work_order_costs'] },
+  { key: 'pos', label: 'Point of sale', tables: ['pos_payment_methods', 'pos_registers', 'pos_shifts', 'pos_sales', 'pos_payments'] },
   { key: 'attachments', label: 'Attachment records (not the files)', tables: ['attachments'] },
 ];
 

@@ -1,0 +1,584 @@
+import { supabase } from '../core/supabase.js';
+import { startPage } from '../core/shell.js';
+import { ui } from '../core/ui.js';
+import { makeModal } from '../core/attachments.js';
+
+const ctx = await startPage();
+
+const toolbar = document.getElementById('toolbar');
+const hint = document.getElementById('hint');
+const panel = document.getElementById('panel');
+
+const CAN_SELL = ctx ? ['owner', 'admin', 'accountant', 'clerk'].includes(ctx.role) : false;
+const KIND_LABEL = { cash: 'Cash', card: 'Card', eft: 'EFT', voucher: 'Voucher', other: 'Other' };
+const REG_KEY = () => `pos-register-${ctx.companyId}`;
+
+let registers = [];
+let methods = [];
+let items = [];
+let itemMap = new Map();
+let taxRates = new Map();
+let customers = [];
+let banks = [];
+let register = null;
+let shift = null;
+let warehouse = null;
+let balances = new Map();
+let base = '';
+let dec = 2;
+let cart = [];
+let customerId = '';
+let custTax = new Map();
+let term = '';
+let sales = { count: 0, total: 0 };
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const money = (n) => Number(n).toLocaleString(undefined, { minimumFractionDigits: dec, maximumFractionDigits: dec });
+const qtyFmt = (n) => Number(n).toLocaleString(undefined, { maximumFractionDigits: 4 });
+const roundTo = (n, d) => { const f = 10 ** d; return Math.round((n + Number.EPSILON) * f) / f; };
+function btn(text, cls, onClick) {
+  const b = el('button', `btn ${cls}`.trim(), text);
+  b.type = 'button';
+  b.addEventListener('click', onClick);
+  return b;
+}
+function option(select, value, text) { const o = el('option', '', text); o.value = value; select.append(o); }
+
+async function fetchAll(make) {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await make().range(from, from + 999);
+    if (error) throw error;
+    out.push(...data);
+    if (data.length < 1000) break;
+  }
+  return out;
+}
+
+/* ---------- data ---------- */
+
+async function loadSetup() {
+  const cid = ctx.companyId;
+  const [r, m, tx, cu, c, bk, it] = await Promise.all([
+    supabase.from('pos_registers').select('*').eq('company_id', cid).eq('is_active', true).order('code'),
+    supabase.from('pos_payment_methods').select('*').eq('company_id', cid).eq('is_active', true).order('sort_order').order('code'),
+    supabase.from('tax_codes').select('id, rate').eq('company_id', cid),
+    supabase.from('company_currencies').select('code, currencies(decimals)').eq('company_id', cid).eq('is_base', true).maybeSingle(),
+    supabase.from('customers').select('id, code, name').eq('company_id', cid).eq('is_active', true).order('code'),
+    supabase.from('gl_accounts').select('id, code, name').eq('company_id', cid).eq('control_type', 'bank')
+      .eq('is_posting', true).eq('is_active', true).order('code'),
+    fetchAll(() => supabase.from('items')
+      .select('id, code, name, item_type, sales_price, sales_price_currency, sales_tax_code_id, item_categories(is_sellable, sales_tax_code_id)')
+      .eq('company_id', cid).eq('is_active', true).order('code').order('id')),
+  ]);
+  for (const x of [r, m, tx, cu, c, bk]) if (x.error) throw x.error;
+  registers = r.data;
+  methods = m.data;
+  taxRates = new Map(tx.data.map((t) => [t.id, Number(t.rate)]));
+  base = cu.data ? cu.data.code : '';
+  dec = cu.data && cu.data.currencies ? cu.data.currencies.decimals : 2;
+  customers = c.data;
+  banks = bk.data;
+  items = it.filter((i) => i.item_categories && i.item_categories.is_sellable && (!i.sales_price_currency || i.sales_price_currency === base));
+  itemMap = new Map(items.map((i) => [i.id, i]));
+}
+
+async function loadRegister() {
+  warehouse = null;
+  shift = null;
+  balances = new Map();
+  cart = [];
+  sales = { count: 0, total: 0 };
+  term = '';
+  if (!register) return;
+  const [w, s, bal] = await Promise.all([
+    supabase.from('warehouses').select('id, code, name, allow_negative_stock').eq('id', register.warehouse_id).single(),
+    supabase.from('pos_shifts').select('*').eq('register_id', register.id).eq('status', 'open').maybeSingle(),
+    fetchAll(() => supabase.from('stock_balances').select('item_id, qty_on_hand')
+      .eq('company_id', ctx.companyId).eq('warehouse_id', register.warehouse_id).order('item_id')),
+  ]);
+  if (w.error) throw w.error;
+  if (s.error) throw s.error;
+  warehouse = w.data;
+  shift = s.data;
+  bal.forEach((b) => balances.set(b.item_id, Number(b.qty_on_hand)));
+  customerId = register.customer_id;
+  await ensureCustTax(customerId);
+  if (shift) {
+    const ps = await fetchAll(() => supabase.from('pos_sales').select('id, total').eq('shift_id', shift.id).order('id'));
+    sales = { count: ps.length, total: ps.reduce((a, x) => a + Number(x.total), 0) };
+  }
+}
+
+async function ensureCustTax(id) {
+  if (!id || custTax.has(id)) return;
+  const { data } = await supabase.rpc('customer_defaults', { p_customer: id });
+  custTax.set(id, data && data[0] ? (data[0].tax_code_id || '') : '');
+}
+
+async function start() {
+  try {
+    await loadSetup();
+    const saved = localStorage.getItem(REG_KEY());
+    register = registers.find((x) => x.id === saved) || registers[0] || null;
+    await loadRegister();
+  } catch (e) { ui.errorFrom(e, 'Could not load the till.'); }
+  render();
+}
+
+/* ---------- screen ---------- */
+
+function render() {
+  document.getElementById('company-title').textContent = ctx.company.name;
+  toolbar.replaceChildren();
+  if (!registers.length) {
+    hint.textContent = '';
+    panel.innerHTML = '<p class="muted">There are no registers yet. Set up payment methods and a register first (POS section of the menu).</p>';
+    return;
+  }
+  if (registers.length > 1) {
+    const sel = el('select', 'compact');
+    registers.forEach((x) => option(sel, x.id, `${x.code} - ${x.name}`));
+    sel.value = register.id;
+    sel.addEventListener('change', async () => {
+      if (cart.length && !(await ui.confirm({ title: 'Change register', message: 'The current cart will be cleared.', confirmText: 'Change' }))) { sel.value = register.id; return; }
+      register = registers.find((x) => x.id === sel.value);
+      try { localStorage.setItem(REG_KEY(), register.id); } catch (e) { /* ignore */ }
+      try { await loadRegister(); } catch (e) { ui.errorFrom(e, 'Could not load the register.'); }
+      render();
+    });
+    toolbar.append(sel);
+  } else {
+    toolbar.append(el('strong', '', `${register.code} - ${register.name}`));
+  }
+  if (shift) {
+    toolbar.append(el('span', 'muted', `Shift ${shift.shift_no} · ${sales.count} sale(s) · ${money(sales.total)} ${base}`));
+  }
+  toolbar.append(el('span', 'spacer'));
+  const link = el('a', 'btn', 'Shifts');
+  link.href = '/pages/pos-shifts.html';
+  toolbar.append(link);
+  if (shift && CAN_SELL) toolbar.append(btn('Close shift', '', closeShift));
+
+  if (!CAN_SELL) { hint.textContent = ''; panel.innerHTML = '<p class="muted">Your role cannot use the till.</p>'; return; }
+  if (!shift) { hint.textContent = ''; renderOpenShift(); return; }
+  hint.textContent = `Selling from ${warehouse ? warehouse.code : ''} in ${base}. Prices are before tax; tax is added from each item. Each sale posts an invoice and a receipt per payment.`;
+  renderSell();
+}
+
+async function renderOpenShift() {
+  const { data } = await supabase.from('pos_shifts').select('float_kept').eq('register_id', register.id).eq('status', 'closed')
+    .order('closed_at', { ascending: false }).limit(1);
+  const last = data && data[0] && data[0].float_kept !== null ? Number(data[0].float_kept) : 0;
+  panel.innerHTML = `<div style="max-width:420px"><h3>Open a shift on ${esc(register.name)}</h3>
+    <p class="muted">Count the cash in the drawer and enter it as the opening float. It starts at what was left in the drawer at the last close.</p>
+    <div class="field"><label for="pos-float">Opening float (${esc(base)})</label><input id="pos-float" type="number" step="any" min="0" value="${last}"></div>
+    <button class="btn btn-primary" id="pos-open" type="button">Open shift</button></div>`;
+  document.getElementById('pos-open').addEventListener('click', async (e) => {
+    e.currentTarget.disabled = true;
+    try {
+      const { error } = await supabase.rpc('pos_open_shift', {
+        p_company: ctx.companyId, p_register: register.id, p_float: Number(document.getElementById('pos-float').value) || 0,
+      });
+      if (error) throw error;
+      ui.success('Shift opened.');
+      await loadRegister();
+      render();
+    } catch (err) { ui.errorFrom(err, 'Could not open the shift.'); e.currentTarget.disabled = false; }
+  });
+}
+
+function renderSell() {
+  panel.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:1rem">
+    <div><input id="pos-search" type="search" placeholder="Scan or type an item code or name" autocomplete="off" style="width:100%">
+      <div id="pos-results" style="margin-top:.5rem"></div></div>
+    <div><div id="pos-cust" style="margin-bottom:.5rem"></div><div id="pos-cart"></div>
+      <div id="pos-totals" class="totals-bar"></div>
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.5rem" id="pos-actions"></div></div></div>`;
+  const acts = document.getElementById('pos-actions');
+  acts.append(btn('Pay', 'btn-primary', openPay), btn('Customer', '', pickCustomer), btn('Clear cart', '', async () => {
+    if (!cart.length) return;
+    if (await ui.confirm({ title: 'Clear cart', message: 'Remove everything from this sale?', confirmText: 'Clear' })) { cart = []; renderCart(); }
+  }));
+  renderCust();
+  renderResults();
+  renderCart();
+  document.getElementById('pos-search').focus();
+}
+
+function renderCust() {
+  const c = customers.find((x) => x.id === customerId);
+  const walk = customerId === register.customer_id;
+  const box = document.getElementById('pos-cust');
+  if (box) box.innerHTML = `<span class="muted">Customer:</span> <strong>${esc(c ? `${c.code} - ${c.name}` : '')}</strong>${walk ? '' : ' <span class="badge st-update">On account</span>'}`;
+}
+
+function renderResults() {
+  const q = term.trim().toLowerCase();
+  const list = (q ? items.filter((i) => i.code.toLowerCase().includes(q) || i.name.toLowerCase().includes(q)) : items).slice(0, q ? 40 : 24);
+  const box = document.getElementById('pos-results');
+  if (!box) return;
+  if (!list.length) { box.innerHTML = '<p class="muted">No items match.</p>'; return; }
+  box.innerHTML = `<div class="table-wrap"><table class="grid"><thead><tr><th>Code</th><th>Item</th><th style="text-align:right">Price</th><th style="text-align:right">On hand</th></tr></thead><tbody>${
+    list.map((i) => `<tr class="clickable" data-add="${i.id}"><td>${esc(i.code)}</td><td>${esc(i.name)}</td>
+      <td class="num">${i.sales_price === null ? '' : money(i.sales_price)}</td>
+      <td class="num">${i.item_type === 'service' ? '' : qtyFmt(balances.get(i.id) || 0)}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+function rateOf(it) {
+  const id = it.sales_tax_code_id || (it.item_categories && it.item_categories.sales_tax_code_id) || custTax.get(customerId) || '';
+  return id ? Number(taxRates.get(id) || 0) : 0;
+}
+
+function calc() {
+  const rows = cart.map((l) => {
+    const it = itemMap.get(l.id);
+    const net = roundTo((Number(l.qty) || 0) * (Number(l.price) || 0), dec);
+    const tax = roundTo(net * (it ? rateOf(it) : 0) / 100, dec);
+    return { net, tax };
+  });
+  const net = rows.reduce((s, x) => s + x.net, 0);
+  const tax = rows.reduce((s, x) => s + x.tax, 0);
+  return { rows, net: roundTo(net, dec), tax: roundTo(tax, dec), total: roundTo(net + tax, dec) };
+}
+
+function renderCart() {
+  const box = document.getElementById('pos-cart');
+  if (!box) return;
+  if (!cart.length) { box.innerHTML = '<p class="muted">The cart is empty. Click an item to add it.</p>'; renderTotals(); return; }
+  box.innerHTML = `<div class="table-wrap"><table class="grid"><thead><tr><th>Item</th><th>Qty</th><th>Price</th><th style="text-align:right">Total</th><th></th></tr></thead><tbody>${
+    cart.map((l, i) => {
+      const it = itemMap.get(l.id);
+      return `<tr><td>${esc(it ? it.name : '')}</td>
+        <td><input type="number" step="any" min="0" value="${l.qty}" data-qty="${i}" style="width:5.5rem"></td>
+        <td><input type="number" step="any" min="0" value="${l.price}" data-price="${i}" style="width:6.5rem"></td>
+        <td class="num" data-line="${i}"></td><td><button class="btn btn-sm btn-ghost" data-rm="${i}" type="button">✕</button></td></tr>`;
+    }).join('')}</tbody></table></div>`;
+  renderTotals();
+}
+
+function renderTotals() {
+  const t = calc();
+  document.querySelectorAll('[data-line]').forEach((c) => { const r = t.rows[Number(c.dataset.line)]; c.textContent = r ? money(r.net) : ''; });
+  const box = document.getElementById('pos-totals');
+  if (box) box.innerHTML = `<span>Net: ${money(t.net)}</span><span>Tax: ${money(t.tax)}</span><span class="ok" style="font-size:1.3rem">Total: ${money(t.total)} ${esc(base)}</span>`;
+}
+
+function addToCart(id) {
+  const it = itemMap.get(id);
+  if (!it) return;
+  const line = cart.find((l) => l.id === id);
+  if (line) line.qty = Number(line.qty) + 1;
+  else cart.push({ id, qty: 1, price: it.sales_price === null ? '' : Number(it.sales_price) });
+  renderCart();
+}
+
+panel.addEventListener('click', (e) => {
+  const add = e.target.closest('[data-add]');
+  if (add) { addToCart(add.dataset.add); const s = document.getElementById('pos-search'); if (s) s.focus(); return; }
+  const rm = e.target.closest('[data-rm]');
+  if (rm) { cart.splice(Number(rm.dataset.rm), 1); renderCart(); }
+});
+panel.addEventListener('input', (e) => {
+  if (e.target.id === 'pos-search') { term = e.target.value; renderResults(); return; }
+  if (e.target.dataset.qty !== undefined) { cart[Number(e.target.dataset.qty)].qty = e.target.value; renderTotals(); }
+  if (e.target.dataset.price !== undefined) { cart[Number(e.target.dataset.price)].price = e.target.value; renderTotals(); }
+});
+panel.addEventListener('keydown', (e) => {
+  if (e.target.id !== 'pos-search' || e.key !== 'Enter') return;
+  e.preventDefault();
+  const q = e.target.value.trim().toLowerCase();
+  if (!q) return;
+  const exact = items.find((i) => i.code.toLowerCase() === q);
+  const found = exact || (items.filter((i) => i.code.toLowerCase().includes(q) || i.name.toLowerCase().includes(q)).length === 1
+    ? items.find((i) => i.code.toLowerCase().includes(q) || i.name.toLowerCase().includes(q)) : null);
+  if (found) { addToCart(found.id); e.target.value = ''; term = ''; renderResults(); }
+});
+
+async function pickCustomer() {
+  const saved = await ui.form({
+    title: 'Customer for this sale', submitText: 'Use customer',
+    fields: [{ name: 'customer', label: 'Customer', type: 'select', required: true, full: true,
+      options: customers.map((c) => ({ value: c.id, label: `${c.code} - ${c.name}` })),
+      hint: 'The walk-in customer must pay in full. For any other customer, whatever is not paid stays on their account.' }],
+    values: { customer: customerId },
+    onSubmit: async (v) => { customerId = v.customer; await ensureCustTax(customerId); },
+  });
+  if (saved) { renderCust(); renderTotals(); }
+}
+
+/* ---------- payment ---------- */
+
+function cartProblem() {
+  if (!cart.length) return 'The cart is empty.';
+  for (let i = 0; i < cart.length; i++) {
+    const l = cart[i];
+    const it = itemMap.get(l.id);
+    if (!(Number(l.qty) > 0)) return `${it.name}: enter a quantity above zero.`;
+    if (l.price === '' || !(Number(l.price) >= 0)) return `${it.name}: enter a price.`;
+  }
+  if (warehouse && !warehouse.allow_negative_stock) {
+    const need = new Map();
+    cart.forEach((l) => { const it = itemMap.get(l.id); if (it.item_type !== 'service') need.set(l.id, (need.get(l.id) || 0) + Number(l.qty)); });
+    for (const [id, q] of need) {
+      const have = balances.get(id) || 0;
+      if (q > have) return `Only ${qtyFmt(have)} of ${itemMap.get(id).code} in stock, ${qtyFmt(q)} in the cart.`;
+    }
+  }
+  return '';
+}
+
+async function openPay() {
+  const problem = cartProblem();
+  if (problem) return ui.warn(problem);
+  const t = calc();
+  if (!(t.total > 0)) return ui.warn('The sale total must be above zero.');
+  if (!methods.length) return ui.warn('There are no payment methods. Set them up first.');
+  const walk = customerId === register.customer_id;
+  const payments = [];
+  let chosen = methods[0];
+
+  const { box, close } = makeModal('Take payment', 'modal wide');
+  const field = (text, input) => { const w = el('div', 'field'); w.append(el('label', '', text), input); return w; };
+  const big = el('div');
+  big.style.cssText = 'font-size:1.8rem;font-weight:700;margin-bottom:.5rem';
+  const mrow = el('div');
+  mrow.style.cssText = 'display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.75rem';
+  const amtIn = el('input'); amtIn.type = 'number'; amtIn.step = 'any'; amtIn.min = '0';
+  const quick = el('div');
+  quick.style.cssText = 'display:flex;gap:.4rem;flex-wrap:wrap;margin:.25rem 0 .5rem';
+  const listEl = el('div');
+  const sum = el('div', 'totals-bar');
+  const addBtn = btn('Add payment', '', () => addPayment());
+  const doneBtn = btn('Complete sale', 'btn-primary', () => complete());
+  box.append(big, mrow, field('Amount tendered', amtIn), quick, addBtn, listEl, sum);
+  const actions = el('div', 'modal-actions');
+  actions.append(el('span', 'spacer'), btn('Back', 'btn-ghost', close), doneBtn);
+  box.append(actions);
+
+  const paidSoFar = () => roundTo(payments.reduce((s, p) => s + p.amount, 0), dec);
+  const remaining = () => roundTo(t.total - paidSoFar(), dec);
+
+  function methodButtons() {
+    mrow.replaceChildren();
+    methods.forEach((m) => {
+      const b = btn(m.name, m.id === chosen.id ? 'btn-primary' : '', () => { chosen = m; methodButtons(); quickButtons(); amtIn.focus(); });
+      mrow.append(b);
+    });
+  }
+  function quickButtons() {
+    quick.replaceChildren();
+    const rem = remaining();
+    if (rem <= 0) return;
+    quick.append(btn(`Exact ${money(rem)}`, '', () => { amtIn.value = String(rem); }));
+    if (chosen.kind === 'cash') {
+      const seen = new Set([rem]);
+      [10, 50, 100, 200].forEach((d) => {
+        const v = Math.ceil(rem / d) * d;
+        if (v > rem && !seen.has(v)) { seen.add(v); quick.append(btn(money(v), '', () => { amtIn.value = String(v); })); }
+      });
+    }
+  }
+  function refresh() {
+    const rem = remaining();
+    const change = roundTo(payments.reduce((s, p) => s + p.change, 0), dec);
+    big.textContent = `${rem > 0 ? 'Due' : 'Paid'}: ${money(rem > 0 ? rem : t.total)} ${base}`;
+    listEl.innerHTML = payments.length ? `<div class="table-wrap"><table class="grid"><tbody>${payments.map((p, i) => `<tr><td>${esc(p.name)}</td>
+      <td class="num">${money(p.amount)}</td><td class="num">${p.change > 0 ? `tendered ${money(p.tendered)}` : ''}</td>
+      <td><button class="btn btn-sm btn-ghost" data-del="${i}" type="button">✕</button></td></tr>`).join('')}</tbody></table></div>` : '';
+    sum.innerHTML = `<span>Total: ${money(t.total)}</span><span>Paid: ${money(paidSoFar())}</span>`
+      + `<span class="${rem > 0 ? 'bad' : 'ok'}">Remaining: ${money(Math.max(rem, 0))}</span>`
+      + (change > 0 ? `<span class="ok" style="font-size:1.3rem">Change: ${money(change)}</span>` : '');
+    doneBtn.disabled = walk ? rem > 0 : payments.length === 0 && false;
+    amtIn.value = rem > 0 ? String(rem) : '';
+    quickButtons();
+  }
+  listEl.addEventListener('click', (e) => {
+    const d = e.target.closest('[data-del]');
+    if (d) { payments.splice(Number(d.dataset.del), 1); refresh(); }
+  });
+
+  function addPayment() {
+    const rem = remaining();
+    if (rem <= 0) return ui.warn('Nothing is left to pay.');
+    const tend = roundTo(Number(amtIn.value) || 0, dec);
+    if (!(tend > 0)) return ui.warn('Enter the amount.');
+    let applied;
+    let change = 0;
+    if (chosen.kind === 'cash') {
+      applied = Math.min(tend, rem);
+      change = roundTo(tend - applied, dec);
+    } else {
+      if (tend > rem + 0.00001) return ui.warn(`A ${KIND_LABEL[chosen.kind].toLowerCase()} payment cannot be more than what is still due (${money(rem)}).`);
+      applied = tend;
+    }
+    payments.push({ method_id: chosen.id, name: chosen.name, kind: chosen.kind, amount: applied, tendered: chosen.kind === 'cash' ? tend : applied, change });
+    refresh();
+  }
+
+  async function complete() {
+    const rem = remaining();
+    if (walk && rem > 0) return ui.warn('A walk-in sale must be paid in full. Add the payment, or choose a customer to leave the rest on account.');
+    if (!walk && rem > 0) {
+      const ok = await ui.confirm({ title: 'Leave on account', message: `${money(rem)} ${base} will stay on the customer's account. Continue?`, confirmText: 'Continue' });
+      if (!ok) return;
+    }
+    doneBtn.disabled = true;
+    try {
+      const snap = { cart: cart.map((l) => ({ ...l })), totals: t, payments: payments.map((p) => ({ ...p })), customer: customers.find((c) => c.id === customerId) };
+      const { data, error } = await supabase.rpc('pos_sell', {
+        p_company: ctx.companyId, p_shift: shift.id, p_customer: walk ? null : customerId,
+        p_lines: cart.map((l) => ({ item_id: l.id, quantity: Number(l.qty), unit_price: Number(l.price) })),
+        p_payments: payments.map((p) => ({ method_id: p.method_id, amount: p.amount, tendered: p.tendered })), p_reference: null,
+      });
+      if (error) throw error;
+      close();
+      cart.forEach((l) => { const it = itemMap.get(l.id); if (it && it.item_type !== 'service') balances.set(l.id, (balances.get(l.id) || 0) - Number(l.qty)); });
+      cart = [];
+      sales = { count: sales.count + 1, total: sales.total + Number(data.total) };
+      customerId = register.customer_id;
+      await saleDone(data, snap);
+      render();
+    } catch (e) {
+      ui.errorFrom(e, 'Could not complete the sale.');
+      doneBtn.disabled = false;
+    }
+  }
+
+  methodButtons();
+  refresh();
+  amtIn.focus();
+}
+
+async function saleDone(res, snap) {
+  const node = el('div');
+  node.innerHTML = `<p class="muted">${esc(res.doc_no)} · Total ${money(res.total)} ${esc(base)} · Paid ${money(res.paid)}</p>
+    ${Number(res.change) > 0 ? `<div style="font-size:2rem;font-weight:700;margin:.5rem 0">Change: ${money(res.change)}</div>` : '<p>Sale complete.</p>'}`;
+  const r = await ui.dialog({
+    title: 'Sale complete', node, dismissValue: 'new',
+    buttons: [{ label: 'Print slip', value: 'print', className: '' }, { label: 'New sale', value: 'new', className: 'btn-primary' }],
+  });
+  if (r === 'print') printSlip(res, snap);
+}
+
+function printSlip(res, snap) {
+  const w = window.open('', '_blank', 'width=380,height=640');
+  if (!w) return ui.warn('Allow pop-ups to print the slip.');
+  const lines = snap.cart.map((l) => {
+    const it = itemMap.get(l.id);
+    return `<tr><td>${esc(it ? it.name : '')}<br>${qtyFmt(l.qty)} × ${money(l.price)}</td><td style="text-align:right">${money(roundTo(Number(l.qty) * Number(l.price), dec))}</td></tr>`;
+  }).join('');
+  const pays = snap.payments.map((p) => `<tr><td>${esc(p.name)}</td><td style="text-align:right">${money(p.tendered)}</td></tr>`).join('');
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(res.doc_no)}</title>
+    <style>body{font:13px/1.35 monospace;margin:12px;max-width:300px}table{width:100%;border-collapse:collapse}td{padding:2px 0;vertical-align:top}hr{border:0;border-top:1px dashed #000}h3{margin:0 0 4px}</style></head><body>
+    <h3>${esc(ctx.company.name)}</h3><div>${esc(res.doc_no)} · ${new Date().toLocaleString()}</div>
+    <div>${esc(register.name)}${snap.customer && customerLabelNotWalk(snap.customer) ? ` · ${esc(snap.customer.name)}` : ''}</div><hr>
+    <table>${lines}</table><hr>
+    <table><tr><td>Net</td><td style="text-align:right">${money(snap.totals.net)}</td></tr>
+    <tr><td>Tax</td><td style="text-align:right">${money(snap.totals.tax)}</td></tr>
+    <tr><td><b>Total (${esc(base)})</b></td><td style="text-align:right"><b>${money(snap.totals.total)}</b></td></tr></table><hr>
+    <table>${pays}${Number(res.change) > 0 ? `<tr><td>Change</td><td style="text-align:right">${money(res.change)}</td></tr>` : ''}</table><hr>
+    <div style="text-align:center">Thank you</div><script>window.onload=function(){window.print();}<\/script></body></html>`);
+  w.document.close();
+}
+const customerLabelNotWalk = (c) => c.id !== register.customer_id;
+
+/* ---------- close shift ---------- */
+
+async function closeShift() {
+  let pays;
+  try { pays = await fetchAll(() => supabase.from('pos_payments').select('method_id, amount, tendered, change_given').eq('shift_id', shift.id).order('id')); }
+  catch (e) { return ui.errorFrom(e, 'Could not load the shift payments.'); }
+  const byMethod = new Map();
+  pays.forEach((p) => {
+    const x = byMethod.get(p.method_id) || { count: 0, amount: 0 };
+    x.count += 1;
+    x.amount += Number(p.amount);
+    byMethod.set(p.method_id, x);
+  });
+  const allMethods = new Map(methods.map((m) => [m.id, m]));
+  const hasCash = !!register.cash_method_id;
+  const cashTakings = hasCash ? (byMethod.get(register.cash_method_id) || { amount: 0 }).amount : 0;
+  const expected = roundTo(Number(shift.opening_float) + cashTakings, dec);
+
+  const { box, close } = makeModal(`Close shift ${shift.shift_no}`, 'modal wide');
+  const rows = [...byMethod.entries()].map(([id, x]) => `<tr><td>${esc((allMethods.get(id) || {}).name || 'Method')}</td><td class="num">${x.count}</td><td class="num">${money(x.amount)}</td></tr>`).join('');
+  const total = [...byMethod.values()].reduce((s, x) => s + x.amount, 0);
+  const sumEl = el('div');
+  sumEl.innerHTML = `<p class="muted">${sales.count} sale(s) · ${money(sales.total)} ${esc(base)} sold</p>
+    <div class="table-wrap"><table class="grid"><thead><tr><th>Payment method</th><th style="text-align:right">Payments</th><th style="text-align:right">Amount</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="3" class="muted">No payments taken.</td></tr>'}<tr class="row-root"><td>Total taken</td><td></td><td class="num">${money(total)}</td></tr></tbody></table></div>`;
+  box.append(sumEl);
+
+  const field = (text, input) => { const w = el('div', 'field'); w.append(el('label', '', text), input); return w; };
+  const countIn = el('input'); countIn.type = 'number'; countIn.step = 'any'; countIn.min = '0';
+  const keepIn = el('input'); keepIn.type = 'number'; keepIn.step = 'any'; keepIn.min = '0'; keepIn.value = String(Number(shift.opening_float));
+  const bankSel = el('select');
+  option(bankSel, '', 'Select bank account');
+  banks.forEach((b) => option(bankSel, b.id, `${b.code} - ${b.name}`));
+  const notesIn = el('input');
+  const result = el('div', 'totals-bar');
+
+  if (hasCash) {
+    const info = el('p', 'muted', `Opening float ${money(shift.opening_float)} + cash takings ${money(cashTakings)} = ${money(expected)} expected in the drawer.`);
+    const grid = el('div', 'form-grid');
+    grid.append(field('Cash counted in the drawer', countIn), field('Keep in the drawer for the next shift', keepIn), field('Bank the rest into', bankSel), field('Notes', notesIn));
+    box.append(el('h4', '', 'Cash-up'), info, grid, result);
+  } else {
+    box.append(field('Notes', notesIn));
+  }
+  function recalc() {
+    if (!hasCash) return;
+    const counted = Number(countIn.value);
+    if (countIn.value === '' || !(counted >= 0)) { result.innerHTML = ''; return; }
+    const diff = roundTo(counted - expected, dec);
+    const keep = Math.min(Number(keepIn.value) || 0, counted);
+    result.innerHTML = `<span class="${diff === 0 ? 'ok' : 'bad'}">${diff === 0 ? 'Drawer agrees' : `${diff > 0 ? 'Over' : 'Short'} by ${money(Math.abs(diff))}`}</span>`
+      + `<span>To bank: ${money(counted - keep)}</span>`;
+  }
+  [countIn, keepIn].forEach((x) => x.addEventListener('input', recalc));
+
+  const actions = el('div', 'modal-actions');
+  const go = btn('Close shift', 'btn-primary', async () => {
+    try {
+      let counted = null;
+      let keep = null;
+      if (hasCash) {
+        if (countIn.value === '' || !(Number(countIn.value) >= 0)) throw new Error('Enter the cash counted in the drawer.');
+        counted = Number(countIn.value);
+        keep = Number(keepIn.value) || 0;
+        if (keep > counted) throw new Error('The float kept cannot be more than the cash counted.');
+        if (counted - keep > 0 && !bankSel.value) throw new Error('Choose the bank account for the cash being banked, or keep it all in the drawer.');
+      }
+      const diff = hasCash ? roundTo(counted - expected, dec) : 0;
+      const ok = await ui.confirm({
+        title: 'Close shift',
+        message: hasCash
+          ? `Close ${shift.shift_no}?\nExpected ${money(expected)}, counted ${money(counted)}${diff !== 0 ? ` (${diff > 0 ? 'over' : 'short'} ${money(Math.abs(diff))}, posted to cash over / short)` : ''}.\n${money(counted - keep)} is banked and ${money(keep)} stays in the drawer.`
+          : `Close ${shift.shift_no}?`,
+        confirmText: 'Close shift',
+      });
+      if (!ok) return;
+      go.disabled = true;
+      const { error } = await supabase.rpc('pos_close_shift', {
+        p_company: ctx.companyId, p_shift: shift.id, p_counted: counted, p_keep: keep,
+        p_bank: hasCash && counted - keep > 0 ? bankSel.value : null, p_notes: notesIn.value,
+      });
+      if (error) throw error;
+      close();
+      ui.success('Shift closed.');
+      await loadRegister();
+      render();
+    } catch (e) { ui.errorFrom(e, 'Could not close the shift.'); go.disabled = false; }
+  });
+  actions.append(el('span', 'spacer'), btn('Cancel', 'btn-ghost', close), go);
+  box.append(actions);
+}
+
+if (ctx) await start();

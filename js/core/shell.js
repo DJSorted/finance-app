@@ -68,6 +68,12 @@ const NAV = [
     { href: '/pages/nursery.html', label: 'Nursery Batches' },
     { href: '/pages/nursery-bills.html', label: 'Allocate Bill Lines' },
   ] },
+  { section: 'POS', items: [
+    { href: '/pages/pos.html', label: 'Point of Sale' },
+    { href: '/pages/pos-shifts.html', label: 'POS Shifts' },
+    { href: '/pages/pos-registers.html', label: 'Registers' },
+    { href: '/pages/pos-methods.html', label: 'Payment Methods' },
+  ] },
   { section: 'Sales', items: [
     { href: '/pages/invoices.html', label: 'Invoices' },
     { href: '/pages/credit-notes.html', label: 'Credit Notes' },
