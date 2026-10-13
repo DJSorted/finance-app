@@ -2,6 +2,7 @@ import { supabase } from '../core/supabase.js';
 import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
+import { openAttachmentsDialog } from '../core/attachments.js';
 
 const ctx = await startPage();
 
@@ -527,14 +528,17 @@ async function openBatch(b) {
     <td class="num">${Number(e.value) ? money(e.value) : ''}</td><td>${esc(e.note || '')}</td></tr>`).join('')}</tbody></table>`;
   node.append(t2);
 
-  const buttons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }];
+  const buttons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }, { label: 'Attachments', value: 'attach', className: 'btn-ghost' }];
   if (active && CAN_WORK) buttons.push({ label: 'Add materials', value: 'material', className: '' }, { label: 'Add labour or cost', value: 'cost', className: '' },
     { label: 'Record loss', value: 'loss', className: '' }, { label: 'Set stage', value: 'stage', className: '' },
     { label: 'Set ready date', value: 'ready', className: '' }, { label: 'Split batch', value: 'split', className: '' });
   if (active && CAN_BOOKS) buttons.push({ label: 'Release to stock', value: 'release', className: 'btn-primary' }, { label: 'Write off', value: 'writeoff', className: 'btn-danger' });
   const res = await ui.dialog({ title: `${b.batch_no} - ${b.name}`, node, wide: true, dismissValue: 'close', buttons });
   const done = async (p) => { if (await p) await reopen(b.id); };
-  if (res === 'material') await done(addMaterial(b));
+  if (res === 'attach') {
+    await openAttachmentsDialog(ctx, { table: 'nursery_batches', recordId: b.id, title: `Attachments: ${b.batch_no}` });
+    await openBatch(b);
+  } else if (res === 'material') await done(addMaterial(b));
   else if (res === 'cost') await done(addCost(b));
   else if (res === 'loss') await done(recordLoss(b));
   else if (res === 'stage') await done(setStage(b));
