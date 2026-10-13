@@ -62,6 +62,7 @@ const NAV = [
   ] },
   { section: 'Nursery', items: [
     { href: '/pages/nursery.html', label: 'Nursery Batches' },
+    { href: '/pages/nursery-bills.html', label: 'Allocate Bill Lines' },
   ] },
   { section: 'Sales', items: [
     { href: '/pages/invoices.html', label: 'Invoices' },

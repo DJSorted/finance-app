@@ -28,7 +28,7 @@ const GROUPS = [
   { key: 'hire', label: 'Hire', tables: [
     'hire_items', 'hire_item_assets', 'bookings', 'booking_lines', 'booking_invoice_items', 'hire_dispatches', 'hire_dispatch_lines',
     'hire_returns', 'hire_return_lines', 'hire_unavailable', 'hire_unavailable_events'] },
-  { key: 'nursery', label: 'Nursery', tables: ['nursery_batches', 'nursery_costs', 'nursery_events'] },
+  { key: 'nursery', label: 'Nursery', tables: ['nursery_batches', 'nursery_costs', 'nursery_events', 'nursery_bill_allocations'] },
   { key: 'attachments', label: 'Attachment records (not the files)', tables: ['attachments'] },
 ];
 

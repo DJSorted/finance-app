@@ -114,7 +114,12 @@ function render() {
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === tab));
   toolbar.replaceChildren();
   if (tab === 'batches') {
-    if (CAN_WORK) toolbar.append(btn('New batch', 'btn-primary', openNewBatch), btn('Bought-in plants', '', startBoughtIn));
+    if (CAN_WORK) {
+      toolbar.append(btn('New batch', 'btn-primary', openNewBatch), btn('Bought-in plants', '', startBoughtIn));
+      const billsLink = el('a', 'btn', 'Allocate bill lines');
+      billsLink.href = '/pages/nursery-bills.html';
+      toolbar.append(billsLink);
+    }
     if (CAN_BOOKS) toolbar.append(btn('Allocate overhead', '', openAllocate));
     const sel = el('select', 'compact');
     [['active', 'Growing'], ['all', 'All'], ['closed', 'Closed'], ['written_off', 'Written off']].forEach(([v, l]) => option(sel, v, l));

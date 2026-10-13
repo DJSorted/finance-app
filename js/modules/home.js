@@ -123,7 +123,7 @@ async function showHome(c) {
   const count = (table, f) => settle(f(supabase.from(table).select('id', { count: 'exact', head: true }).eq('company_id', cid)));
 
   const [tb, tbPrev, monthly, sOpen, pOpen, rSales, rPurch, rStock, rGrni, rFa, outNow, upcoming, hireCount, retBk,
-    dInv, dBill, dJrn, holdExp, repair, recCounts, dbSize] = await Promise.all([
+    dInv, dBill, dJrn, holdExp, repair, recCounts, dbSize, nurBatches, rNur] = await Promise.all([
     rpc('trial_balance', { p_from: start, p_to: today }),
     rpc('trial_balance', { p_from: addYears(start, -1), p_to: addYears(today, -1) }),
     rpc('monthly_profit', { p_from: monthFrom, p_to: today }),
@@ -146,6 +146,9 @@ async function showHome(c) {
     count('hire_unavailable', (q) => q.eq('status', 'open')),
     rpc('data_record_counts', {}),
     settle(supabase.rpc('database_size_bytes')),
+    settle(supabase.from('nursery_batches').select('qty_alive, wip_balance, expected_ready')
+      .eq('company_id', cid).in('status', ['growing', 'partly_released']).limit(1000)),
+    rpc('nursery_reconciliation', { p_as_of: today }),
   ]);
 
   /* ----- profit and loss ----- */
@@ -242,6 +245,21 @@ async function showHome(c) {
     }));
   }
 
+  /* ----- nursery ----- */
+  const nur = nurBatches.error || !nurBatches.data ? [] : nurBatches.data;
+  const nurRec = rNur.error || !rNur.data || !rNur.data[0] ? null : rNur.data[0];
+  const nurReadyNow = nur.filter((b) => b.expected_ready && b.expected_ready <= today).length;
+  const nurUsed = nur.length > 0 || (nurRec && (Number(nurRec.subledger) !== 0 || Number(nurRec.ledger) !== 0));
+  if (nurUsed) {
+    const growing = nur.reduce((s, b) => s + Number(b.qty_alive), 0);
+    const wipVal = nurRec ? Number(nurRec.subledger) : nur.reduce((s, b) => s + Number(b.wip_balance), 0);
+    t2.push(tile({
+      label: 'Nursery work in progress', value: num0(wipVal), href: '/pages/nursery.html',
+      sub: `${esc(base)} · ${num0(growing)} plants growing in ${nur.length} batch${nur.length === 1 ? '' : 'es'}`
+        + `${nurReadyNow ? `<br><span style="color:var(--success)">${nurReadyNow} batch(es) ready to sell</span>` : ''}`,
+    }));
+  }
+
   /* ----- monthly chart ----- */
   const months = [];
   const mm = D(monthFrom);
@@ -273,6 +291,7 @@ async function showHome(c) {
   const lateBookings = new Set((outNow.data || []).filter((r) => r.days_overdue > 0).map((r) => r.booking_id)).size;
   add(lateBookings, 'Hire bookings overdue back', '/pages/hire-out.html');
   add(repair.count || 0, 'Hire repair queue entries open', '/pages/hire-repairs.html');
+  add(nurReadyNow, 'Nursery batches ready to sell', '/pages/nursery.html');
   if (hireCount.count > 0) {
     const unbilled = (retBk.data || []).filter((b) => !(b.sales_documents || []).length).length;
     add(unbilled, 'Returned hire bookings not invoiced', '/pages/bookings.html');
@@ -291,6 +310,7 @@ async function showHome(c) {
   check('Stock and inventory accounts', rStock, (r) => Number(r.difference), '/pages/stock-valuation.html');
   check('Goods received not invoiced', rGrni, (r) => Number(r.difference), '/pages/goods-received.html');
   check('Asset register and fixed asset accounts', rFa, (r) => Math.abs(Number(r.cost_diff)) + Math.abs(Number(r.accum_diff)), '/pages/fixed-assets.html');
+  if (nurUsed) check('Nursery batches and WIP control account', rNur, (r) => Number(r.difference), '/pages/nursery.html');
 
   /* ----- data ----- */
   const totalRecords = recCounts.error || !recCounts.data ? null : recCounts.data.reduce((s, r) => s + Number(r.records), 0);
