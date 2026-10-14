@@ -630,10 +630,45 @@ async function openViewer(d) {
       : `Cost returned to stock: ${money(cogs)} ${base}.`);
     node.append(m);
   }
-  await ui.dialog({
-    title: `${LABEL} ${d.doc_no}`, node, wide: true, dismissValue: 'close',
-    buttons: [{ label: 'Close', value: 'close', className: 'btn-ghost' }],
+  const viewButtons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }];
+  if (TYPE === 'credit_note' && CAN_RATE && d.currency_code === base) {
+    viewButtons.push({ label: 'Refund customer', value: 'refund', className: '' });
+  }
+  const viewRes = await ui.dialog({ title: `${LABEL} ${d.doc_no}`, node, wide: true, dismissValue: 'close', buttons: viewButtons });
+  if (viewRes === 'refund') await refundCreditNote(d);
+}
+
+async function refundCreditNote(d) {
+  const [rem, bk] = await Promise.all([
+    supabase.rpc('sales_source_remaining', { p_kind: 'credit_note', p_id: d.id }),
+    supabase.from('gl_accounts').select('id, code, name').eq('company_id', ctx.companyId).eq('control_type', 'bank')
+      .eq('is_posting', true).eq('is_active', true).order('code'),
+  ]);
+  if (rem.error || bk.error) return ui.errorFrom(rem.error || bk.error, 'Could not load the refund details.');
+  const left = rem.data && rem.data[0] ? Number(rem.data[0].trx) : 0;
+  if (!(left > 0)) return ui.warn('This credit note has nothing left to refund.');
+  if (!bk.data.length) return ui.warn('Create a bank or cash account first (a posting account with control type Bank).');
+  const saved = await ui.form({
+    title: `Refund against ${d.doc_no}`, submitText: 'Refund',
+    fields: [
+      { name: 'bank', label: 'Pay out from', type: 'select', required: true, full: true,
+        options: [{ value: '', label: 'Select a bank or cash account' }].concat(bk.data.map((b) => ({ value: b.id, label: `${b.code} - ${b.name}` }))) },
+      { name: 'amount', label: `Amount (${base})`, type: 'number', required: true, hint: `Up to ${money(left)}. Any part not refunded stays as credit on the customer's account.` },
+      { name: 'date', label: 'Refund date', type: 'date', required: true },
+      { name: 'reference', label: 'Reference' },
+      { name: 'notes', label: 'Notes', full: true },
+    ],
+    values: { amount: left, date: todayIso() },
+    onSubmit: async (v) => {
+      if (!(v.amount > 0) || v.amount > left + 0.005) throw new Error(`Enter an amount up to ${money(left)}.`);
+      const { error } = await supabase.rpc('post_customer_refund', {
+        p_company: ctx.companyId, p_credit_note: d.id, p_date: v.date, p_amount: v.amount, p_bank: v.bank,
+        p_reference: v.reference, p_notes: v.notes,
+      });
+      if (error) throw error;
+    },
   });
+  if (saved) { ui.success('Refund posted.'); await refresh(); }
 }
 
 if (ctx) {

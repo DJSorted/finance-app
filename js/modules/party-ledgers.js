@@ -17,7 +17,7 @@ const MODES = {
     label: 'Customers', one: 'Customer', table: 'customers', stmt: 'sales_statement', open: 'sales_open_items',
     param: 'p_customer', asOf: 'p_as_of', dr: 'debit', cr: 'credit', drH: 'Debit', crH: 'Credit', balH: 'Balance',
     dueKind: 'invoice', hasSupRef: false,
-    kind: { invoice: 'Invoice', credit_note: 'Credit note', receipt: 'Receipt', receipt_reversal: 'Receipt reversal', journal: 'Journal' },
+    kind: { invoice: 'Invoice', credit_note: 'Credit note', receipt: 'Receipt', receipt_reversal: 'Receipt reversal', refund: 'Refund', journal: 'Journal' },
     openKind: { invoice: 'Invoice', credit_note: 'Credit note', receipt: 'Receipt', journal: 'Journal' },
     note: 'Debtors: debit balances are owed to us, brackets are credit balances.',
   },

@@ -164,6 +164,7 @@ function render() {
   const link = el('a', 'btn', 'Shifts');
   link.href = '/pages/pos-shifts.html';
   toolbar.append(link);
+  if (shift && CAN_REFUND) toolbar.append(btn('Refund', '', openRefund));
   if (shift && CAN_SELL) toolbar.append(btn('Close shift', '', closeShift));
 
   if (!CAN_SELL) { hint.textContent = ''; panel.innerHTML = '<p class="muted">Your role cannot use the till.</p>'; return; }
@@ -504,7 +505,11 @@ async function closeShift() {
   });
   const allMethods = new Map(methods.map((m) => [m.id, m]));
   const hasCash = !!register.cash_method_id;
-  const cashTakings = hasCash ? (byMethod.get(register.cash_method_id) || { amount: 0 }).amount : 0;
+  let refunds = [];
+  try { refunds = await fetchAll(() => supabase.from('pos_refund_payouts').select('method_id, amount').eq('shift_id', shift.id).order('id')); } catch (e) { /* treated as none */ }
+  const refundTotal = refunds.reduce((a, x) => a + Number(x.amount), 0);
+  const cashRefunds = hasCash ? refunds.filter((x) => x.method_id === register.cash_method_id).reduce((a, x) => a + Number(x.amount), 0) : 0;
+  const cashTakings = hasCash ? (byMethod.get(register.cash_method_id) || { amount: 0 }).amount - cashRefunds : 0;
   const expected = roundTo(Number(shift.opening_float) + cashTakings, dec);
 
   const { box, close } = makeModal(`Close shift ${shift.shift_no}`, 'modal wide');
@@ -513,7 +518,7 @@ async function closeShift() {
   const sumEl = el('div');
   sumEl.innerHTML = `<p class="muted">${sales.count} sale(s) · ${money(sales.total)} ${esc(base)} sold</p>
     <div class="table-wrap"><table class="grid"><thead><tr><th>Payment method</th><th style="text-align:right">Payments</th><th style="text-align:right">Amount</th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="3" class="muted">No payments taken.</td></tr>'}<tr class="row-root"><td>Total taken</td><td></td><td class="num">${money(total)}</td></tr></tbody></table></div>`;
+    <tbody>${rows || '<tr><td colspan="3" class="muted">No payments taken.</td></tr>'}<tr class="row-root"><td>Total taken</td><td></td><td class="num">${money(total)}</td></tr>${refundTotal ? `<tr><td>Refunds paid out</td><td></td><td class="num">(${money(refundTotal)})</td></tr>` : ''}</tbody></table></div>`;
   box.append(sumEl);
 
   const field = (text, input) => { const w = el('div', 'field'); w.append(el('label', '', text), input); return w; };
@@ -576,6 +581,190 @@ async function closeShift() {
       await loadRegister();
       render();
     } catch (e) { ui.errorFrom(e, 'Could not close the shift.'); go.disabled = false; }
+  });
+  actions.append(el('span', 'spacer'), btn('Cancel', 'btn-ghost', close), go);
+  box.append(actions);
+}
+
+/* ---------- refunds ---------- */
+
+const CAN_REFUND = ctx ? ['owner', 'admin', 'accountant'].includes(ctx.role) : false;
+
+function pickSale() {
+  return new Promise((resolve) => {
+    const { box, close } = makeModal('Refund: choose the sale', 'modal wide');
+    const search = el('input');
+    search.type = 'search';
+    search.placeholder = 'Invoice number (blank shows the latest sales)';
+    search.style.width = '100%';
+    const listEl = el('div');
+    box.append(search, listEl);
+    let sales2 = [];
+    let docs = new Map();
+
+    async function load(q) {
+      listEl.innerHTML = '<p class="muted">Loading...</p>';
+      let sl = [];
+      if (q) {
+        const d = await supabase.from('sales_documents').select('id').eq('company_id', ctx.companyId)
+          .eq('doc_type', 'invoice').ilike('doc_no', `%${q}%`).limit(30);
+        const ids = (d.data || []).map((x) => x.id);
+        if (ids.length) sl = (await supabase.from('pos_sales').select('*').in('invoice_id', ids)).data || [];
+      } else {
+        sl = (await supabase.from('pos_sales').select('*').eq('company_id', ctx.companyId).order('created_at', { ascending: false }).limit(30)).data || [];
+      }
+      docs = new Map();
+      const ids = [...new Set(sl.map((x) => x.invoice_id))];
+      if (ids.length) (((await supabase.from('sales_documents').select('id, doc_no').in('id', ids)).data) || []).forEach((x) => docs.set(x.id, x.doc_no));
+      sales2 = sl;
+      if (!sl.length) { listEl.innerHTML = '<p class="muted">No POS sales found.</p>'; return; }
+      listEl.innerHTML = `<div class="table-wrap"><table class="grid"><thead><tr><th>Invoice</th><th>Time</th><th style="text-align:right">Total</th></tr></thead><tbody>${
+        sl.map((x) => `<tr class="clickable" data-sale="${x.id}"><td>${esc(docs.get(x.invoice_id) || '')}</td>
+          <td>${esc(String(x.created_at).slice(0, 16).replace('T', ' '))}</td><td class="num">${money(x.total)}</td></tr>`).join('')}</tbody></table></div>`;
+    }
+    listEl.addEventListener('click', (e) => {
+      const tr = e.target.closest('tr[data-sale]');
+      if (!tr) return;
+      const sale = sales2.find((x) => x.id === tr.dataset.sale);
+      close();
+      resolve({ ...sale, doc_no: docs.get(sale.invoice_id) });
+    });
+    let t;
+    search.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => load(search.value.trim()), 300); });
+    const actions = el('div', 'modal-actions');
+    actions.append(el('span', 'spacer'), btn('Cancel', 'btn-ghost', () => { close(); resolve(null); }));
+    box.append(actions);
+    load('');
+  });
+}
+
+async function openRefund() {
+  if (!CAN_REFUND) return;
+  const sale = await pickSale();
+  if (!sale) return;
+  const [l, pays] = await Promise.all([
+    supabase.from('sales_document_lines').select('*, items(code, name, item_type)').eq('document_id', sale.invoice_id).order('line_no'),
+    supabase.from('pos_payments').select('method_id').eq('sale_id', sale.id),
+  ]);
+  if (l.error) return ui.errorFrom(l.error, 'Could not load the sale.');
+  const rf = await supabase.from('pos_refund_lines').select('source_line_id, qty').in('source_line_id', l.data.map((x) => x.id));
+  const refunded = new Map();
+  (rf.data || []).forEach((x) => refunded.set(x.source_line_id, (refunded.get(x.source_line_id) || 0) + Number(x.qty)));
+  const rows = l.data.filter((x) => x.item_id && x.items).map((x) => {
+    const stock = x.items.item_type !== 'service';
+    return { line: x, stock, left: roundTo(Number(x.quantity) - (stock ? Number(x.qty_credited) : (refunded.get(x.id) || 0)), 4) };
+  }).filter((r) => r.left > 0);
+  if (!rows.length) return ui.warn('Nothing on this sale can still be refunded.');
+  const walkCust = (registers.find((r) => r.id === sale.register_id) || register).customer_id;
+  const walk = sale.customer_id === walkCust;
+  const usedMethod = pays.data && pays.data[0] ? pays.data[0].method_id : null;
+  const defMethod = methods.find((m) => m.id === usedMethod) || methods.find((m) => m.kind === 'cash') || methods[0];
+
+  const { box, close } = makeModal(`Refund ${sale.doc_no}`, 'modal xwide');
+  const body = el('div');
+  const tbl = el('div', 'table-wrap');
+  tbl.innerHTML = '<table class="grid"><thead><tr><th></th><th>Item</th><th style="text-align:right">Sold</th><th style="text-align:right">Can refund</th><th>Quantity</th><th style="text-align:right">Price</th><th style="text-align:right">Refund</th></tr></thead><tbody></tbody></table>';
+  const tb = tbl.querySelector('tbody');
+  const lineRows = rows.map((r) => {
+    const tr = el('tr');
+    const cb = el('input'); cb.type = 'checkbox'; cb.style.width = 'auto';
+    const qty = el('input'); qty.type = 'number'; qty.step = 'any'; qty.min = '0'; qty.max = String(r.left); qty.value = String(r.left); qty.disabled = true; qty.style.width = '6rem';
+    const amt = el('td', 'num');
+    const c0 = el('td'); c0.append(cb);
+    const c4 = el('td'); c4.append(qty);
+    tr.append(c0, el('td', '', `${r.line.items.name}`), el('td', 'num', qtyFmt(r.line.quantity)), el('td', 'num', qtyFmt(r.left)), c4,
+      el('td', 'num', money(r.line.unit_price)), amt);
+    tb.append(tr);
+    cb.addEventListener('change', () => { qty.disabled = !cb.checked; recalc(); });
+    qty.addEventListener('input', recalc);
+    return { r, cb, qty, amt };
+  });
+  body.append(tbl);
+
+  const reasonIn = el('input'); reasonIn.placeholder = 'Reason (optional)'; reasonIn.style.width = '100%';
+  const totals = el('div', 'totals-bar');
+  const payBox = el('div');
+  const payRows = [];
+  const mOptions = () => methods.map((m) => ({ value: m.id, label: `${m.name}` }));
+
+  function refundTotal() {
+    let net = 0;
+    let tax = 0;
+    lineRows.forEach((x) => {
+      if (!x.cb.checked) { x.amt.textContent = ''; return; }
+      const q = Number(x.qty.value) || 0;
+      const n = roundTo(q * Number(x.r.line.unit_price), dec);
+      const t = roundTo(n * (x.r.line.tax_code_id ? Number(taxRates.get(x.r.line.tax_code_id) || 0) : 0) / 100, dec);
+      x.amt.textContent = money(n + t);
+      net += n; tax += t;
+    });
+    return roundTo(net + tax, dec);
+  }
+  function paidOut() { return roundTo(payRows.reduce((s, p) => s + (Number(p.amt.value) || 0), 0), dec); }
+  function recalc() {
+    const total = refundTotal();
+    if (payRows.length === 1 && !payRows[0].manual) payRows[0].amt.value = total > 0 ? String(total) : '';
+    const po = paidOut();
+    totals.innerHTML = `<span>Refund total: ${money(total)} ${esc(base)}</span><span>Paid out: ${money(po)}</span>`
+      + (walk ? '' : `<span>Left as credit on the account: ${money(Math.max(total - po, 0))}</span>`);
+  }
+  function addPayRow() {
+    const row = el('div', 'form-grid');
+    const sel = el('select');
+    mOptions().forEach((o) => option(sel, o.value, o.label));
+    sel.value = payRows.length ? methods[0].id : defMethod.id;
+    const amt = el('input'); amt.type = 'number'; amt.step = 'any'; amt.min = '0';
+    const wrapSel = el('div', 'field'); wrapSel.append(el('label', '', 'Pay out by'), sel);
+    const wrapAmt = el('div', 'field'); wrapAmt.append(el('label', '', 'Amount'), amt);
+    row.append(wrapSel, wrapAmt);
+    payBox.append(row);
+    const pr = { sel, amt, manual: payRows.length > 0 };
+    amt.addEventListener('input', () => { pr.manual = true; recalc(); });
+    payRows.push(pr);
+  }
+  addPayRow();
+  box.append(body, el('h4', '', 'Pay the customer back'), payBox, btn('Split across another method', '', () => { addPayRow(); recalc(); }),
+    el('div', 'field', ''), reasonIn, totals);
+  recalc();
+
+  const actions = el('div', 'modal-actions');
+  const go = btn('Refund', 'btn-primary', async () => {
+    const chosen = lineRows.filter((x) => x.cb.checked);
+    if (!chosen.length) return ui.warn('Tick the lines being returned.');
+    for (const x of chosen) {
+      const q = Number(x.qty.value) || 0;
+      if (!(q > 0) || q > x.r.left + 0.00001) return ui.warn(`${x.r.line.items.name}: enter a quantity from 0 to ${qtyFmt(x.r.left)}.`);
+    }
+    const total = refundTotal();
+    const po = paidOut();
+    if (po > total + 0.00001) return ui.warn('The payouts are more than the refund total.');
+    if (walk && Math.abs(po - total) > 0.00001) return ui.warn('A walk-in refund must be paid out in full.');
+    const cashOut = payRows.filter((p) => (methods.find((m) => m.id === p.sel.value) || {}).kind === 'cash').reduce((s, p) => s + (Number(p.amt.value) || 0), 0);
+    const ok = await ui.confirm({
+      title: 'Refund',
+      message: `Refund ${money(total)} ${base} against ${sale.doc_no}?\nStock lines go back into stock. ${money(po)} is paid out${cashOut ? `, ${money(cashOut)} of it in cash from the drawer` : ''}.`,
+      confirmText: 'Refund', danger: true,
+    });
+    if (!ok) return;
+    go.disabled = true;
+    try {
+      const { data, error } = await supabase.rpc('pos_refund', {
+        p_company: ctx.companyId, p_shift: shift.id, p_sale: sale.id,
+        p_lines: chosen.map((x) => ({ line_id: x.r.line.id, quantity: Number(x.qty.value) })),
+        p_payouts: payRows.filter((p) => Number(p.amt.value) > 0).map((p) => ({ method_id: p.sel.value, amount: Number(p.amt.value) })),
+        p_reason: reasonIn.value,
+      });
+      if (error) throw error;
+      close();
+      chosen.forEach((x) => { if (x.r.stock) balances.set(x.r.line.item_id, (balances.get(x.r.line.item_id) || 0) + Number(x.qty.value)); });
+      renderResults();
+      await ui.dialog({
+        title: 'Refund complete',
+        node: Object.assign(el('div'), { innerHTML: `<p>Credit note ${esc(data.doc_no)} · ${money(data.total)} ${esc(base)}</p>
+          ${cashOut ? `<div style="font-size:2rem;font-weight:700;margin:.5rem 0">Hand back cash: ${money(cashOut)}</div>` : ''}` }),
+        dismissValue: 'ok', buttons: [{ label: 'Done', value: 'ok', className: 'btn-primary' }],
+      });
+    } catch (e) { ui.errorFrom(e, 'Could not refund the sale.'); go.disabled = false; }
   });
   actions.append(el('span', 'spacer'), btn('Cancel', 'btn-ghost', close), go);
   box.append(actions);

@@ -12,7 +12,7 @@ const panel = document.getElementById('panel');
 
 const CAN_APPLY = ctx ? ['owner', 'admin', 'accountant', 'clerk'].includes(ctx.role) : false;
 const CAN_REVERSE = ctx ? ctx.canEdit : false;
-const KIND = { invoice: 'Invoice', credit_note: 'Credit note', receipt: 'Receipt', receipt_reversal: 'Receipt reversal', journal: 'Journal' };
+const KIND = { invoice: 'Invoice', credit_note: 'Credit note', receipt: 'Receipt', receipt_reversal: 'Receipt reversal', refund: 'Refund', journal: 'Journal' };
 
 let customers = [];
 let currencies = [];

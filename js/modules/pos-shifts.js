@@ -63,7 +63,7 @@ const visible = () => shifts.filter((s) => statusFilter === 'all' || s.status ==
 
 function render() {
   document.getElementById('company-title').textContent = ctx.company.name;
-  hint.textContent = `Every till shift with its cash-up, in ${base}. Click a shift for its takings by payment method and its sales.`;
+  hint.textContent = `Every till shift with its cash-up, in ${base}. Click a shift for its takings by payment method, its sales and its refunds.`;
   toolbar.replaceChildren();
   const sel = el('select', 'compact');
   [['all', 'All'], ['open', 'Open'], ['closed', 'Closed']].forEach(([v, l]) => { const o = el('option', '', l); o.value = v; sel.append(o); });
@@ -101,32 +101,42 @@ panel.addEventListener('click', (e) => {
 async function openShift(s) {
   let pays;
   let sl;
+  let rp;
+  let rf;
   try {
-    [pays, sl] = await Promise.all([
+    [pays, sl, rp, rf] = await Promise.all([
       fetchAll(() => supabase.from('pos_payments').select('method_id, amount, tendered, change_given').eq('shift_id', s.id).order('id')),
       fetchAll(() => supabase.from('pos_sales').select('id, invoice_id, total, paid, change_given, created_at').eq('shift_id', s.id).order('created_at').order('id')),
+      fetchAll(() => supabase.from('pos_refund_payouts').select('method_id, amount').eq('shift_id', s.id).order('id')),
+      fetchAll(() => supabase.from('pos_refunds').select('id, credit_note_id, total, paid_out, reason, created_at').eq('shift_id', s.id).order('created_at').order('id')),
     ]);
   } catch (e) { return ui.errorFrom(e, 'Could not load the shift.'); }
 
   const docNo = new Map();
-  const ids = [...new Set(sl.map((x) => x.invoice_id))];
+  const ids = [...new Set([...sl.map((x) => x.invoice_id), ...rf.map((x) => x.credit_note_id)])];
   for (let i = 0; i < ids.length; i += 100) {
     const { data } = await supabase.from('sales_documents').select('id, doc_no').in('id', ids.slice(i, i + 100));
     (data || []).forEach((d) => docNo.set(d.id, d.doc_no));
   }
   const by = new Map();
   pays.forEach((p) => {
-    const x = by.get(p.method_id) || { count: 0, amount: 0, change: 0 };
+    const x = by.get(p.method_id) || { count: 0, amount: 0, change: 0, refunded: 0 };
     x.count += 1; x.amount += Number(p.amount); x.change += Number(p.change_given);
     by.set(p.method_id, x);
   });
+  rp.forEach((p) => {
+    const x = by.get(p.method_id) || { count: 0, amount: 0, change: 0, refunded: 0 };
+    x.refunded += Number(p.amount);
+    by.set(p.method_id, x);
+  });
   const total = [...by.values()].reduce((a, x) => a + x.amount, 0);
+  const refundedTotal = [...by.values()].reduce((a, x) => a + x.refunded, 0);
   const sold = sl.reduce((a, x) => a + Number(x.total), 0);
 
   const node = el('div');
   node.append(Object.assign(el('p', 'muted'), {
     textContent: [`${s.pos_registers ? s.pos_registers.name : ''} · opened ${stamp(s.opened_at)}${s.closed_at ? ` · closed ${stamp(s.closed_at)}` : ''}`,
-      `${sl.length} sale(s) · ${money(sold)} ${base} sold · opening float ${money(s.opening_float)}`,
+      `${sl.length} sale(s) · ${money(sold)} ${base} sold · ${rf.length} refund(s) · opening float ${money(s.opening_float)}`,
       s.status === 'closed' && s.expected_cash !== null
         ? `Expected ${money(s.expected_cash)} · counted ${money(s.counted_cash)} · ${Number(s.cash_difference) === 0 ? 'agreed' : `difference ${signed(s.cash_difference)}`} · banked ${money(s.cash_banked)} · kept ${money(s.float_kept)}` : '',
       s.notes ? `Notes: ${s.notes}` : ''].filter(Boolean).join('\n'),
@@ -134,10 +144,10 @@ async function openShift(s) {
   node.firstChild.style.whiteSpace = 'pre-line';
 
   const t1 = el('div', 'table-wrap');
-  t1.innerHTML = `<table class="grid"><thead><tr><th>Payment method</th><th style="text-align:right">Payments</th><th style="text-align:right">Amount</th><th style="text-align:right">Change given</th></tr></thead><tbody>
+  t1.innerHTML = `<table class="grid"><thead><tr><th>Payment method</th><th style="text-align:right">Payments</th><th style="text-align:right">Amount</th><th style="text-align:right">Refunded</th><th style="text-align:right">Change given</th></tr></thead><tbody>
     ${[...by.entries()].map(([id, x]) => `<tr><td>${esc((methods.get(id) || {}).name || 'Method')}</td><td class="num">${x.count}</td><td class="num">${money(x.amount)}</td>
-    <td class="num">${x.change ? money(x.change) : ''}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">No payments.</td></tr>'}
-    <tr class="row-root"><td>Total taken</td><td></td><td class="num">${money(total)}</td><td></td></tr></tbody></table>`;
+    <td class="num">${x.refunded ? `(${money(x.refunded)})` : ''}</td><td class="num">${x.change ? money(x.change) : ''}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">No payments.</td></tr>'}
+    <tr class="row-root"><td>Net taken</td><td></td><td class="num">${money(total - refundedTotal)}</td><td></td><td></td></tr></tbody></table>`;
   node.append(el('h4', '', 'Takings by payment method'), t1);
 
   const t2 = el('div', 'table-wrap');
@@ -145,6 +155,14 @@ async function openShift(s) {
     ${sl.map((x) => `<tr><td>${stamp(x.created_at)}</td><td>${esc(docNo.get(x.invoice_id) || '')}</td><td class="num">${money(x.total)}</td>
     <td class="num">${money(x.paid)}</td><td class="num">${Number(x.change_given) ? money(x.change_given) : ''}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">No sales.</td></tr>'}</tbody></table>`;
   node.append(el('h4', '', 'Sales'), t2);
+
+  if (rf.length) {
+    const t3 = el('div', 'table-wrap');
+    t3.innerHTML = `<table class="grid"><thead><tr><th>Time</th><th>Credit note</th><th style="text-align:right">Refund</th><th style="text-align:right">Paid out</th><th>Reason</th></tr></thead><tbody>
+      ${rf.map((x) => `<tr><td>${stamp(x.created_at)}</td><td>${esc(docNo.get(x.credit_note_id) || '')}</td><td class="num">${money(x.total)}</td>
+      <td class="num">${money(x.paid_out)}</td><td>${esc(x.reason || '')}</td></tr>`).join('')}</tbody></table>`;
+    node.append(el('h4', '', 'Refunds'), t3);
+  }
   await ui.dialog({ title: `Shift ${s.shift_no}`, node, wide: true, dismissValue: 'close', buttons: [{ label: 'Close', value: 'close', className: 'btn-ghost' }] });
 }
 

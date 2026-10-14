@@ -19,7 +19,7 @@ const GROUPS = [
     'units_of_measure', 'item_categories', 'warehouses', 'asset_categories'] },
   { key: 'accounting', label: 'Accounting (journals and lines)', tables: ['journals', 'journal_lines'] },
   { key: 'sales', label: 'Sales', tables: [
-    'customers', 'sales_documents', 'sales_document_lines', 'customer_receipts', 'sales_allocations', 'sales_applications'] },
+    'customers', 'sales_documents', 'sales_document_lines', 'customer_receipts', 'customer_refunds', 'sales_allocations', 'sales_applications'] },
   { key: 'purchases', label: 'Purchases', tables: [
     'suppliers', 'purchase_orders', 'purchase_order_lines', 'goods_receipts', 'goods_receipt_lines', 'purchase_documents',
     'purchase_document_lines', 'supplier_payments', 'purchase_allocations', 'purchase_applications'] },
@@ -30,7 +30,7 @@ const GROUPS = [
     'hire_returns', 'hire_return_lines', 'hire_unavailable', 'hire_unavailable_events'] },
   { key: 'nursery', label: 'Nursery', tables: ['nursery_batches', 'nursery_costs', 'nursery_events', 'nursery_bill_allocations'] },
   { key: 'manufacturing', label: 'Manufacturing', tables: ['boms', 'bom_lines', 'work_orders', 'work_order_lines', 'work_order_costs'] },
-  { key: 'pos', label: 'Point of sale', tables: ['pos_payment_methods', 'pos_registers', 'pos_shifts', 'pos_sales', 'pos_payments'] },
+  { key: 'pos', label: 'Point of sale', tables: ['pos_payment_methods', 'pos_registers', 'pos_shifts', 'pos_sales', 'pos_payments', 'pos_refunds', 'pos_refund_lines', 'pos_refund_payouts'] },
   { key: 'attachments', label: 'Attachment records (not the files)', tables: ['attachments'] },
 ];
 
