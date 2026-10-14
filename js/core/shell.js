@@ -21,6 +21,7 @@ const NAV = [
   ] },
   { section: 'Setup', items: [
     { href: '/pages/company.html', label: 'Company Profile' },
+    { href: '/pages/new-company.html', label: 'New Company' },
     { href: '/pages/members.html', label: 'Users' },
     { href: '/pages/chart.html', label: 'Chart of Accounts' },
     { href: '/pages/reports.html', label: 'Report Layouts' },
