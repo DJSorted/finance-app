@@ -161,7 +161,7 @@ function render() {
       <th style="text-align:right">${esc(base)}</th><th style="text-align:right">Days overdue</th></tr></thead>
       <tbody>${oiBody}<tr class="row-root"><td colspan="8">Total owed (${esc(base)})</td><td class="num">${fmt(baseTotal) || '0.00'}</td><td></td></tr></tbody></table></div>`
     : '<p class="muted">Nothing outstanding.</p>'}
-    <p class="muted">Journal items cannot be allocated. Correct them with a reversing journal. Brackets are amounts owed to us.</p></div>`;
+    <p class="muted">Journal items can be matched against bills and credits with Apply credits. Brackets are amounts owed to us.</p></div>`;
 
   // applications
   const appBody = apps.map((a) => `<tr data-app="${a.id}"><td>${a.app_date}</td><td>${esc(a.currency_code)}</td>
@@ -200,10 +200,10 @@ async function openApply() {
   if (!supId) return ui.warn('Choose a supplier first.');
   const { data, error } = await supabase.rpc('purchase_open_items', { p_company: ctx.companyId, p_supplier: supId, p_as_of: todayIso() });
   if (error) return ui.errorFrom(error, 'Could not load the open items.');
-  const credits = data.filter((i) => (i.doc_kind === 'credit_note' || i.doc_kind === 'payment') && Number(i.outstanding) < 0);
-  const bills = data.filter((i) => i.doc_kind === 'bill' && Number(i.outstanding) > 0);
+  const credits = data.filter((i) => (i.doc_kind === 'credit_note' || i.doc_kind === 'payment' || i.doc_kind === 'journal') && Number(i.outstanding) < 0);
+  const bills = data.filter((i) => (i.doc_kind === 'bill' || i.doc_kind === 'journal') && Number(i.outstanding) > 0);
   const curs = [...new Set(credits.map((c) => c.currency_code))].filter((c) => bills.some((i) => i.currency_code === c));
-  if (!curs.length) return ui.warn('This supplier has no open credit notes or payments on account to apply against open bills in the same currency.');
+  if (!curs.length) return ui.warn('This supplier has no open credits (credit notes, payments on account or journal debits) to apply against open bills or journal credits in the same currency.');
 
   const prevFocus = document.activeElement;
   const backdrop = el('div', 'modal-backdrop');
@@ -241,7 +241,7 @@ async function openApply() {
       outstanding: -Number(c.outstanding), fx_rate: Number(c.fx_rate),
     })), dec);
     billGrid.setItems(bills.filter((i) => i.currency_code === cur).map((i) => ({
-      id: i.doc_id, doc_no: i.supplier_ref ? `${i.doc_no} · ${i.supplier_ref}` : i.doc_no, doc_date: i.doc_date,
+      id: i.doc_id, kind: i.doc_kind, doc_no: i.supplier_ref ? `${i.doc_no} · ${i.supplier_ref}` : i.doc_no, doc_date: i.doc_date,
       due_date: i.due_date, outstanding: Number(i.outstanding), fx_rate: Number(i.fx_rate),
     })), dec);
     sync();
@@ -294,7 +294,7 @@ async function openApply() {
       const { error: e2 } = await supabase.rpc('apply_purchase_credits', {
         p_company: ctx.companyId, p_supplier: supId, p_date: dateIn.value, p_currency: cur,
         p_sources: srcs.map((x) => ({ kind: x.item.kind, id: x.item.id, amount: x.amount })),
-        p_bills: bls.map((b) => ({ bill_id: b.invoice_id, amount: b.amount })),
+        p_bills: billGrid.detailed().map((x) => ({ kind: x.item.kind, id: x.item.id, amount: x.amount })),
       });
       if (e2) throw e2;
       close();

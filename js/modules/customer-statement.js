@@ -160,7 +160,7 @@ function render() {
       <th style="text-align:right">${esc(base)}</th><th style="text-align:right">Days overdue</th></tr></thead>
       <tbody>${oiBody}<tr class="row-root"><td colspan="7">Total (${esc(base)})</td><td class="num">${fmt(baseTotal) || '0.00'}</td><td></td></tr></tbody></table></div>`
     : '<p class="muted">Nothing outstanding.</p>'}
-    <p class="muted">Journal items cannot be allocated. Correct them with a reversing journal.</p></div>`;
+    <p class="muted">Journal items can be matched against invoices and credits with Apply credits.</p></div>`;
 
   // applications
   const appBody = apps.map((a) => `<tr data-app="${a.id}"><td>${a.app_date}</td><td>${esc(a.currency_code)}</td>
@@ -199,10 +199,10 @@ async function openApply() {
   if (!custId) return ui.warn('Choose a customer first.');
   const { data, error } = await supabase.rpc('sales_open_items', { p_company: ctx.companyId, p_customer: custId, p_as_of: todayIso() });
   if (error) return ui.errorFrom(error, 'Could not load the open items.');
-  const credits = data.filter((i) => (i.doc_kind === 'credit_note' || i.doc_kind === 'receipt') && Number(i.outstanding) < 0);
-  const invoices = data.filter((i) => i.doc_kind === 'invoice' && Number(i.outstanding) > 0);
+  const credits = data.filter((i) => (i.doc_kind === 'credit_note' || i.doc_kind === 'receipt' || i.doc_kind === 'journal') && Number(i.outstanding) < 0);
+  const invoices = data.filter((i) => (i.doc_kind === 'invoice' || i.doc_kind === 'journal') && Number(i.outstanding) > 0);
   const curs = [...new Set(credits.map((c) => c.currency_code))].filter((c) => invoices.some((i) => i.currency_code === c));
-  if (!curs.length) return ui.warn('This customer has no open credit notes or receipts to apply against open invoices in the same currency.');
+  if (!curs.length) return ui.warn('This customer has no open credits (credit notes, receipts or journal credits) to apply against open invoices or journal debits in the same currency.');
 
   const prevFocus = document.activeElement;
   const backdrop = el('div', 'modal-backdrop');
@@ -238,7 +238,7 @@ async function openApply() {
       outstanding: -Number(c.outstanding), fx_rate: Number(c.fx_rate),
     })), dec);
     invGrid.setItems(invoices.filter((i) => i.currency_code === cur).map((i) => ({
-      id: i.doc_id, doc_no: i.doc_no, doc_date: i.doc_date, due_date: i.due_date,
+            id: i.doc_id, kind: i.doc_kind, doc_no: i.doc_no, doc_date: i.doc_date, due_date: i.due_date,
       outstanding: Number(i.outstanding), fx_rate: Number(i.fx_rate),
     })), dec);
     sync();
@@ -291,7 +291,7 @@ async function openApply() {
       const { error: e2 } = await supabase.rpc('apply_sales_credits', {
         p_company: ctx.companyId, p_customer: custId, p_date: dateIn.value, p_currency: cur,
         p_sources: srcs.map((x) => ({ kind: x.item.kind, id: x.item.id, amount: x.amount })),
-        p_invoices: invs,
+        p_invoices: invGrid.detailed().map((x) => ({ kind: x.item.kind, id: x.item.id, amount: x.amount })),
       });
       if (e2) throw e2;
       close();
