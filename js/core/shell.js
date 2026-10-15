@@ -12,10 +12,12 @@ const NAV = [
     { href: '/pages/journals.html', label: 'Journals' },
      { href: '/pages/trial-balance.html', label: 'Trial Balance' },
     { href: '/pages/general-ledger.html', label: 'General Ledger' },
+    { href: '/pages/open-items.html', label: 'Open Items' },
     { href: '/pages/party-ledgers.html', label: 'Debtors & Creditors Ledger' },
   ] },
   { section: 'Reports', items: [
     { href: '/pages/income-statement.html', label: 'Income Statement' },
+    { href: '/pages/income-trend.html', label: 'Income Trend' },
     { href: '/pages/balance-sheet.html', label: 'Balance Sheet' },
     { href: '/pages/cash-flow.html', label: 'Cash Flow' },
   ] },

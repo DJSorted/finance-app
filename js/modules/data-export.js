@@ -22,7 +22,7 @@ const GROUPS = [
     'customers', 'sales_documents', 'sales_document_lines', 'customer_receipts', 'customer_refunds', 'sales_allocations', 'sales_applications'] },
   { key: 'purchases', label: 'Purchases', tables: [
     'suppliers', 'purchase_orders', 'purchase_order_lines', 'goods_receipts', 'goods_receipt_lines', 'purchase_documents',
-    'purchase_document_lines', 'supplier_payments', 'purchase_allocations', 'purchase_applications'] },
+    'purchase_document_lines', 'supplier_payments', 'purchase_allocations', 'purchase_applications', 'grni_writeoffs'] },
   { key: 'inventory', label: 'Inventory', tables: ['items', 'stock_balances', 'stock_documents', 'stock_document_lines', 'stock_movements', 'price_rules', 'price_history'] },
   { key: 'assets', label: 'Fixed assets', tables: ['fixed_assets', 'asset_movements', 'depreciation_runs'] },
   { key: 'hire', label: 'Hire', tables: [
