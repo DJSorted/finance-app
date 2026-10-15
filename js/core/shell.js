@@ -71,6 +71,10 @@ const NAV = [
     { href: '/pages/nursery.html', label: 'Nursery Batches' },
     { href: '/pages/nursery-bills.html', label: 'Allocate Bill Lines' },
   ] },
+  { section: 'Projects', items: [
+    { href: '/pages/projects.html', label: 'Projects' },
+    { href: '/pages/project-report.html', label: 'Project Report' },
+  ] },
   { section: 'POS', items: [
     { href: '/pages/pos.html', label: 'Point of Sale' },
     { href: '/pages/pos-shifts.html', label: 'POS Shifts' },

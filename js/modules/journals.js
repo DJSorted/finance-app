@@ -18,6 +18,7 @@ let accounts = [];
 let currencies = [];
 let customers = [];
 let suppliers = [];
+let projects = [];
 let base = '';
 let statusFilter = 'all';
 let term = '';
@@ -48,7 +49,7 @@ function option(select, value, text) {
 
 async function load() {
   const cid = ctx.companyId;
-  const [j, a, c, cu, s] = await Promise.all([
+  const [j, a, c, cu, s, pj] = await Promise.all([
     supabase.from('journals').select('*, journal_lines(base_debit)').eq('company_id', cid)
       .order('journal_date', { ascending: false }).order('created_at', { ascending: false }).limit(300),
     supabase.from('gl_accounts').select('id, code, name, control_type, is_active')
@@ -56,8 +57,10 @@ async function load() {
     supabase.from('company_currencies').select('code, is_base').eq('company_id', cid).order('code'),
     supabase.from('customers').select('id, code, name').eq('company_id', cid).order('code'),
     supabase.from('suppliers').select('id, code, name').eq('company_id', cid).order('code'),
+    supabase.from('projects').select('id, code, name, status').eq('company_id', cid).in('status', ['open', 'on_hold']).order('code'),
   ]);
-  for (const r of [j, a, c, cu, s]) if (r.error) throw r.error;
+  for (const r of [j, a, c, cu, s, pj]) if (r.error) throw r.error;
+  projects = pj.data;
   journals = j.data;
   accounts = a.data;
   currencies = c.data;
@@ -150,7 +153,7 @@ async function openEditor(existing) {
     seed = data.map((l) => ({
       account_id: l.account_id, description: l.description || '', currency_code: l.currency_code,
       debit: Number(l.trx_debit) || '', credit: Number(l.trx_credit) || '',
-      fx_rate: l.rate_source === 'manual' ? String(Number(l.fx_rate)) : '', party: l.customer_id || l.supplier_id || '',
+      fx_rate: l.rate_source === 'manual' ? String(Number(l.fx_rate)) : '', party: l.customer_id || l.supplier_id || '', project_id: l.project_id || '',
     }));
   }
   while (seed.length < 2) seed.push({});
@@ -197,7 +200,7 @@ async function openEditor(existing) {
   const wrap = el('div', 'lines-wrap');
   const table = el('table', 'lines-table');
   table.innerHTML = '<thead><tr><th style="min-width:220px">Account</th><th>Description</th><th>Currency</th>'
-    + '<th>Debit</th><th>Credit</th><th>Rate</th><th style="min-width:180px">Customer / supplier</th><th></th></tr></thead>';
+    + '<th>Debit</th><th>Credit</th><th>Rate</th><th style="min-width:180px">Customer / supplier</th><th style="min-width:150px">Project</th><th></th></tr></thead>';
   const tbody = el('tbody');
   table.append(tbody);
   wrap.append(table);
@@ -238,16 +241,22 @@ async function openEditor(existing) {
     const cr = el('input'); cr.type = 'number'; cr.step = 'any'; cr.min = '0'; cr.value = s.credit ?? '';
     const rate = el('input'); rate.type = 'number'; rate.step = 'any'; rate.value = s.fx_rate || '';
     const party = el('td');
+    const projSel = el('select');
+    option(projSel, '', '');
+    projects.forEach((p) => option(projSel, p.id, `${p.code} - ${p.name}`));
+    projSel.value = s.project_id || '';
+    const projTd = el('td');
+    projTd.append(projSel);
     const del = el('button', 'btn btn-sm btn-ghost', '✕');
     del.type = 'button';
     del.title = 'Remove line';
 
-    const row = { tr, accSel, descI, curSel, dr, cr, rate, party, partySel: null, partyKind: null, manual: !!s.fx_rate };
+    const row = { tr, accSel, descI, curSel, dr, cr, rate, party, projSel, partySel: null, partyKind: null, manual: !!s.fx_rate };
 
     [accSel, descI, curSel, dr, cr, rate].forEach((x) => { const td = el('td'); td.append(x); tr.append(td); });
     const delTd = el('td');
     delTd.append(del);
-    tr.append(party, delTd);
+    tr.append(party, projTd, delTd);
     tbody.append(tr);
 
     row.buildParty = (selected) => {
@@ -367,6 +376,7 @@ async function openEditor(existing) {
         if (!r.partySel.value) throw new Error(`Line ${n}: choose a ${r.partyKind}.`);
         if (r.partyKind === 'customer') line.customer_id = r.partySel.value; else line.supplier_id = r.partySel.value;
       }
+      line.project_id = r.projSel.value || null;
       out.push(line);
     });
     if (out.length < 2) throw new Error('A journal needs at least two lines.');
@@ -382,6 +392,11 @@ async function openEditor(existing) {
       p_override_reason: ovBox && ovBox.checked ? ovReason.value : null,
     });
     if (error) throw error;
+    const tagged = p_lines.map((l, i) => ({ line_no: i + 1, project_id: l.project_id })).filter((x) => x.project_id);
+    if (tagged.length) {
+      const { error: e2 } = await supabase.rpc('set_journal_projects', { p_journal: data, p_lines: tagged });
+      if (e2) { journalId = data; throw e2; }
+    }
     journalId = data;
     return data;
   }

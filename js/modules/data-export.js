@@ -17,7 +17,7 @@ const GROUPS = [
     'companies', 'company_settings', 'company_currencies', 'company_rates', 'fx_rate_rules', 'fiscal_years', 'fiscal_periods',
     'account_groups', 'gl_accounts', 'report_formats', 'report_lines', 'tax_codes', 'payment_terms', 'number_sequences',
     'units_of_measure', 'item_categories', 'warehouses', 'asset_categories'] },
-  { key: 'accounting', label: 'Accounting (journals and lines)', tables: ['journals', 'journal_lines'] },
+  { key: 'accounting', label: 'Accounting (journals and lines)', tables: ['journals', 'journal_lines', 'projects'] },
   { key: 'sales', label: 'Sales', tables: [
     'customers', 'sales_documents', 'sales_document_lines', 'customer_receipts', 'customer_refunds', 'sales_allocations', 'sales_applications'] },
   { key: 'purchases', label: 'Purchases', tables: [

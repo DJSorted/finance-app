@@ -25,6 +25,7 @@ let items = [];
 let itemMap = new Map();
 let accounts = [];
 let warehouses = [];
+let projects = [];
 let base = '';
 let statusFilter = 'all';
 let needle = '';
@@ -66,7 +67,7 @@ function calcDue(termsId, dateStr) {
 
 async function load() {
   const cid = ctx.companyId;
-  const [d, c, cu, t, tx, it, a, w] = await Promise.all([
+  const [d, c, cu, t, tx, it, a, pj, w] = await Promise.all([
     supabase.from('sales_documents').select('*, customers(code, name)').eq('company_id', cid).eq('doc_type', TYPE)
       .order('doc_date', { ascending: false }).order('created_at', { ascending: false }).limit(300),
     supabase.from('customers').select('id, code, name').eq('company_id', cid).eq('is_active', true).order('code'),
@@ -77,10 +78,12 @@ async function load() {
       .eq('company_id', cid).eq('is_active', true).order('code'),
     supabase.from('gl_accounts').select('id, code, name, account_groups(class_type)')
       .eq('company_id', cid).eq('is_posting', true).eq('is_active', true).is('control_type', null).order('code'),
+    supabase.from('projects').select('id, code, name, status').eq('company_id', cid).in('status', ['open', 'on_hold']).order('code'),
     supabase.from('warehouses').select('id, code, name, is_default, allow_negative_stock')
       .eq('company_id', cid).eq('is_active', true).order('code'),
   ]);
-  for (const r of [d, c, cu, t, tx, it, a, w]) if (r.error) throw r.error;
+  for (const r of [d, c, cu, t, tx, it, a, pj, w]) if (r.error) throw r.error;
+  projects = pj.data;
   docs = d.data;
   customers = c.data;
   currencies = cu.data;
@@ -191,7 +194,7 @@ async function openEditor(existing) {
     }
     seed = data.map((l) => ({
       item_id: l.item_id || '', description: l.description, quantity: Number(l.quantity), unit_price: Number(l.unit_price),
-      tax_code_id: l.tax_code_id || '', account_id: l.account_id || '', source_line_id: l.source_line_id || '',
+      tax_code_id: l.tax_code_id || '', account_id: l.account_id || '', source_line_id: l.source_line_id || '', project_id: l.project_id || '',
     }));
   }
   if (!seed.length) seed.push({});
@@ -233,6 +236,10 @@ async function openEditor(existing) {
   whSel.value = existing && existing.warehouse_id ? existing.warehouse_id
     : ((warehouses.find((w) => w.is_default) || warehouses[0] || {}).id || '');
   const notesIn = el('input'); notesIn.value = existing ? (existing.notes || '') : '';
+  const projSel = el('select');
+  option(projSel, '', 'No project');
+  projects.forEach((p) => option(projSel, p.id, `${p.code} - ${p.name}`));
+  projSel.value = seed.length && seed.every((x) => x.project_id === seed[0].project_id) ? (seed[0].project_id || '') : '';
 
   let dueManual = !!existing;
   let rateManual = !!(existing && existing.manual_rate);
@@ -243,7 +250,7 @@ async function openEditor(existing) {
     field('Payment terms', termSel), field('Due date', dueIn), field('Reference', refIn),
     field(CAN_RATE ? 'Exchange rate (override allowed)' : 'Exchange rate', rateIn),
     field(TYPE === 'invoice' ? 'Warehouse (stock leaves from)' : 'Warehouse (stock returns to)', whSel),
-    field('Notes', notesIn, true));
+    field('Project', projSel), field('Notes', notesIn, true));
   box.append(head);
 
   const wrap = el('div', 'lines-wrap');
@@ -530,6 +537,7 @@ async function openEditor(existing) {
         unit_price: Number(r.price.value), tax_code_id: r.taxSel.value || null, account_id: r.accSel.value || null,
       };
     });
+    lines.forEach((l) => { l.project_id = projSel.value || null; });
     const hasStock = need.size > 0 || lines.some((l) => l.source_line_id);
     if (hasStock && !wh) throw new Error('Choose the warehouse for the stock lines.');
     need.forEach((q, id) => {
