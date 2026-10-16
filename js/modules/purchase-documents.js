@@ -2,7 +2,7 @@ import { supabase } from '../core/supabase.js';
 import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
-import { openAttachmentsDialog } from '../core/attachments.js';
+import { openAttachmentsDialog, uploadAttachment, validateFile, ALLOWED_EXT } from '../core/attachments.js';
 
 const ctx = await startPage();
 
@@ -16,6 +16,8 @@ const panel = document.getElementById('panel');
 
 const CAN_DRAFT = ctx ? ['owner', 'admin', 'accountant', 'clerk'].includes(ctx.role) : false;
 const CAN_RATE = ctx ? ctx.canEdit : false;
+// The database function save_purchase_document does not take a project yet. Set this to true once it does.
+const PROJECT_ON_SAVE = false;
 
 let docs = [];
 let suppliers = [];
@@ -238,6 +240,8 @@ async function openEditor(existing) {
   projSel.value = seedProject;
   const rateIn = el('input'); rateIn.type = 'number'; rateIn.step = 'any';
   const notesIn = el('input'); notesIn.value = existing ? (existing.notes || '') : '';
+  const photoIn = el('input'); photoIn.type = 'file'; photoIn.accept = 'image/*'; photoIn.setAttribute('capture', 'environment');
+  const slipIn = el('input'); slipIn.type = 'file'; slipIn.accept = ALLOWED_EXT;
 
   let dueManual = !!existing;
   let rateManual = !!(existing && existing.manual_rate);
@@ -246,8 +250,9 @@ async function openEditor(existing) {
   const head = el('div', 'form-grid');
   head.append(field('Supplier *', supSel, true), field('Supplier document number *', srefIn), field('Date *', dateIn),
     field('Currency', curSel), field('Payment terms', termSel), field('Due date', dueIn),
-    field('Our reference', refIn), field('Project', projSel),
-    field(CAN_RATE ? 'Exchange rate (override allowed)' : 'Exchange rate', rateIn), field('Notes', notesIn, true));
+    field('Our reference', refIn), ...(PROJECT_ON_SAVE ? [field('Project', projSel)] : []),
+    field(CAN_RATE ? 'Exchange rate (override allowed)' : 'Exchange rate', rateIn), field('Notes', notesIn, true),
+    field('Take a photo of the slip (on a phone this opens the camera)', photoIn), field('Or choose a file of the slip', slipIn));
   box.append(head);
 
   const wrap = el('div', 'lines-wrap');
@@ -547,16 +552,27 @@ async function openEditor(existing) {
 
   async function persist() {
     const p_lines = collect();
+    const slips = [photoIn.files[0], slipIn.files[0]].filter(Boolean);
+    for (const f of slips) {
+      const err = validateFile(f);
+      if (err) throw new Error(err);
+    }
     const { data, error } = await supabase.rpc('save_purchase_document', {
       p_company: ctx.companyId, p_doc: docId, p_type: TYPE, p_supplier: supSel.value, p_supplier_ref: srefIn.value,
       p_date: dateIn.value, p_due: dueIn.value || null, p_terms: termSel.value || null, p_currency: curSel.value,
       p_reference: refIn.value, p_notes: notesIn.value,
       p_manual_rate: (curSel.value !== base && rateManual && Number(rateIn.value) > 0) ? Number(rateIn.value) : null,
-      p_project: projSel.value || null,
+      ...(PROJECT_ON_SAVE ? { p_project: projSel.value || null } : {}),
       p_lines,
     });
     if (error) throw error;
     docId = data;
+    for (const f of slips) {
+      try { await uploadAttachment(ctx, 'purchase_documents', docId, f, 'Slip or receipt'); }
+      catch (e) { ui.warn(`The ${LABEL.toLowerCase()} was saved, but the slip could not be uploaded: ${e.message || 'unknown error'}. Use Attachments to add it again.`); }
+    }
+    photoIn.value = '';
+    slipIn.value = '';
     return data;
   }
 
