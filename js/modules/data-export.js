@@ -11,29 +11,9 @@ const panel = document.getElementById('panel');
 
 const PAGE = 1000;
 const EXCEL_ROW_WARNING = 300000;
+const ORDER = { stock_balances: ['item_id', 'warehouse_id'] };   // tables without an id column need a fixed order to page safely
 
-const GROUPS = [
-  { key: 'company', label: 'Company and setup', tables: [
-    'companies', 'company_settings', 'company_currencies', 'company_rates', 'fx_rate_rules', 'fiscal_years', 'fiscal_periods',
-    'account_groups', 'gl_accounts', 'report_formats', 'report_lines', 'tax_codes', 'payment_terms', 'number_sequences',
-    'units_of_measure', 'item_categories', 'warehouses', 'asset_categories'] },
-  { key: 'accounting', label: 'Accounting (journals and lines)', tables: ['journals', 'journal_lines', 'projects'] },
-  { key: 'sales', label: 'Sales', tables: [
-    'customers', 'sales_documents', 'sales_document_lines', 'customer_receipts', 'customer_refunds', 'sales_allocations', 'sales_applications'] },
-  { key: 'purchases', label: 'Purchases', tables: [
-    'suppliers', 'purchase_orders', 'purchase_order_lines', 'goods_receipts', 'goods_receipt_lines', 'purchase_documents',
-    'purchase_document_lines', 'supplier_payments', 'purchase_allocations', 'purchase_applications', 'grni_writeoffs'] },
-  { key: 'inventory', label: 'Inventory', tables: ['items', 'stock_balances', 'stock_documents', 'stock_document_lines', 'stock_movements', 'price_rules', 'price_history'] },
-  { key: 'assets', label: 'Fixed assets', tables: ['fixed_assets', 'asset_movements', 'depreciation_runs'] },
-  { key: 'hire', label: 'Hire', tables: [
-    'hire_items', 'hire_item_assets', 'bookings', 'booking_lines', 'booking_invoice_items', 'hire_dispatches', 'hire_dispatch_lines',
-    'hire_returns', 'hire_return_lines', 'hire_unavailable', 'hire_unavailable_events'] },
-  { key: 'nursery', label: 'Nursery', tables: ['nursery_batches', 'nursery_costs', 'nursery_events', 'nursery_bill_allocations'] },
-  { key: 'manufacturing', label: 'Manufacturing', tables: ['boms', 'bom_lines', 'work_orders', 'work_order_lines', 'work_order_costs'] },
-  { key: 'pos', label: 'Point of sale', tables: ['pos_payment_methods', 'pos_registers', 'pos_shifts', 'pos_sales', 'pos_payments', 'pos_refunds', 'pos_refund_lines', 'pos_refund_payouts'] },
-  { key: 'attachments', label: 'Attachment records (not the files)', tables: ['attachments'] },
-];
-
+let GROUPS = [];
 const checks = new Map();
 let busy = false;
 
@@ -60,16 +40,28 @@ formatSel.style.width = 'auto';
 [['xlsx', 'One Excel workbook'], ['csv', 'Zip of CSV files']].forEach(([v, t]) => { const o = el('option', '', t); o.value = v; formatSel.append(o); });
 const goBtn = btn('Export', 'btn-primary', run);
 
-function init() {
+async function loadCatalog() {
+  const { data, error } = await supabase.rpc('data_table_catalog');
+  if (error) throw error;
+  const map = new Map();
+  data.filter((r) => r.exportable).sort((a, b) => a.sort_order - b.sort_order).forEach((r) => {
+    if (!map.has(r.area_key)) map.set(r.area_key, { key: r.area_key, label: r.area, tables: [] });
+    map.get(r.area_key).tables.push(r.table_name);
+  });
+  GROUPS = [...map.values()];
+}
+
+async function init() {
   document.getElementById('company-title').textContent = ctx.company.name;
   if (!ctx.canEdit) {
     panel.innerHTML = '<p class="muted">Only owners, admins and accountants can export the full data.</p>';
     return;
   }
+  try { await loadCatalog(); } catch (e) { ui.errorFrom(e, 'Could not load the list of tables.'); return; }
   toolbar.append(el('span', 'muted', 'Format'), formatSel, goBtn);
   hint.textContent = 'Exports every record this company holds, one sheet (or CSV file) per table, with the original column names and ids. It leaves out user accounts, invitations, the access log and shared reference data. Attachment files are not included, only their records.';
   const rows = GROUPS.map((g) => `<label style="display:flex;gap:.6rem;align-items:flex-start;padding:.5rem 0;cursor:pointer">
-      <input type="checkbox" data-group="${g.key}" checked style="width:auto;margin-top:.25rem">
+      <input type="checkbox" data-group="${esc(g.key)}" checked style="width:auto;margin-top:.25rem">
       <span><strong>${esc(g.label)}</strong><br><span class="muted">${g.tables.map(esc).join(', ')}</span></span></label>`).join('');
   panel.innerHTML = `<div id="groups">${rows}</div><div id="status" style="margin-top:1rem"></div>`;
   panel.querySelectorAll('[data-group]').forEach((c) => checks.set(c.dataset.group, c));
@@ -79,15 +71,16 @@ function init() {
 
 async function fetchTable(table) {
   const col = table === 'companies' ? 'id' : 'company_id';
+  const orderCols = ORDER[table] || ['id'];
   const rows = [];
   let ordered = true;
   let from = 0;
   for (;;) {
     let q = supabase.from(table).select('*').eq(col, ctx.companyId);
-    if (ordered) q = q.order('id');
+    if (ordered) orderCols.forEach((c) => { q = q.order(c); });
     const { data, error } = await q.range(from, from + PAGE - 1);
     if (error) {
-      // a table without an id column: read it unordered, from the start
+      // a table without those columns: read it unordered, from the start
       if (ordered && error.code === '42703' && !String(error.message).includes(col)) { ordered = false; from = 0; rows.length = 0; continue; }
       throw error;
     }
@@ -160,7 +153,7 @@ async function run() {
   const lines = [];
   const show = (extra) => { status.innerHTML = `<p class="muted">${[...lines, extra].filter(Boolean).map(esc).join('<br>')}</p>`; };
 
-  const data = [];     // { table, cols, rows }
+  const data = [];
   const contents = [];
   let total = 0;
   try {
@@ -221,4 +214,4 @@ async function run() {
   }
 }
 
-if (ctx) init();
+if (ctx) await init();
