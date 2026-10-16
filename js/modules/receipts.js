@@ -3,6 +3,7 @@ import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
 import { createAllocationGrid } from '../core/allocation-grid.js';
+import { openAttachmentsDialog } from '../core/attachments.js';
 
 const ctx = await startPage();
 
@@ -377,7 +378,10 @@ async function openViewer(r) {
   const buttons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }];
   if (CAN_RATE && r.status === 'posted') buttons.push({ label: 'Reverse', value: 'reverse', className: 'btn-danger' });
   const res = await ui.dialog({ title: `Receipt ${r.receipt_no}`, node, buttons, dismissValue: 'close', wide: true });
-  if (res === 'reverse') await reverseReceipt(r);
+  if (res === 'attach') {
+    await openAttachmentsDialog(ctx, { table: 'customer_receipts', recordId: r.id, title: `Attachments: Receipt ${r.receipt_no}` });
+    await openViewer(r);
+  } else if (res === 'reverse') await reverseReceipt(r);
 }
 
 async function reverseReceipt(r) {

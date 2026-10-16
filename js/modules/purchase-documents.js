@@ -16,8 +16,6 @@ const panel = document.getElementById('panel');
 
 const CAN_DRAFT = ctx ? ['owner', 'admin', 'accountant', 'clerk'].includes(ctx.role) : false;
 const CAN_RATE = ctx ? ctx.canEdit : false;
-// The database function save_purchase_document does not take a project yet. Set this to true once it does.
-const PROJECT_ON_SAVE = false;
 
 let docs = [];
 let suppliers = [];
@@ -250,7 +248,7 @@ async function openEditor(existing) {
   const head = el('div', 'form-grid');
   head.append(field('Supplier *', supSel, true), field('Supplier document number *', srefIn), field('Date *', dateIn),
     field('Currency', curSel), field('Payment terms', termSel), field('Due date', dueIn),
-    field('Our reference', refIn), ...(PROJECT_ON_SAVE ? [field('Project', projSel)] : []),
+    field('Our reference', refIn), field('Project', projSel),
     field(CAN_RATE ? 'Exchange rate (override allowed)' : 'Exchange rate', rateIn), field('Notes', notesIn, true),
     field('Take a photo of the slip (on a phone this opens the camera)', photoIn), field('Or choose a file of the slip', slipIn));
   box.append(head);
@@ -530,6 +528,7 @@ async function openEditor(existing) {
         return {
           receipt_line_id: r.rcl, item_id: r.itemId, description: r.desc.value.trim(), quantity: Number(r.qty.value),
           unit_price: Number(r.price.value), tax_code_id: r.taxSel.value || null, account_id: null,
+          project_id: projSel.value || null,
         };
       }
       const isAsset = r.itemSel.value.startsWith('asset:');
@@ -546,6 +545,7 @@ async function openEditor(existing) {
         description: r.desc.value.trim(), quantity: Number(r.qty.value),
         unit_price: Number(r.price.value), tax_code_id: r.taxSel.value || null,
         account_id: isAsset ? null : (r.accSel.value || null),
+        project_id: projSel.value || null,
       };
     });
   }
@@ -562,7 +562,6 @@ async function openEditor(existing) {
       p_date: dateIn.value, p_due: dueIn.value || null, p_terms: termSel.value || null, p_currency: curSel.value,
       p_reference: refIn.value, p_notes: notesIn.value,
       p_manual_rate: (curSel.value !== base && rateManual && Number(rateIn.value) > 0) ? Number(rateIn.value) : null,
-      ...(PROJECT_ON_SAVE ? { p_project: projSel.value || null } : {}),
       p_lines,
     });
     if (error) throw error;

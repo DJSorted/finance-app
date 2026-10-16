@@ -2,6 +2,7 @@ import { supabase } from '../core/supabase.js';
 import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
+import { openAttachmentsDialog } from '../core/attachments.js';
 
 const ctx = await startPage();
 
@@ -478,10 +479,14 @@ async function openViewer(g) {
     <tbody>${body}<tr><td colspan="4"><strong>Total</strong></td><td class="num"><strong>${money(g.total_trx, dec)}</strong></td>
     <td class="num"><strong>${money(g.total_base)}</strong></td><td></td></tr></tbody></table>`;
   node.append(t);
-  await ui.dialog({
+  const res = await ui.dialog({
     title: `Goods received ${g.grn_no}`, node, wide: true, dismissValue: 'close',
-    buttons: [{ label: 'Close', value: 'close', className: 'btn-ghost' }],
+    buttons: [{ label: 'Close', value: 'close', className: 'btn-ghost' }, { label: 'Attachments', value: 'attach', className: 'btn-ghost' }],
   });
+  if (res === 'attach') {
+    await openAttachmentsDialog(ctx, { table: 'goods_receipts', recordId: g.id, title: `Attachments: Goods received ${g.grn_no}` });
+    await openViewer(g);
+  }
 }
 
 if (ctx) {

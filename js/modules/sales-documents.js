@@ -2,6 +2,7 @@ import { supabase } from '../core/supabase.js';
 import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
+import { openAttachmentsDialog } from '../core/attachments.js';
 
 const ctx = await startPage();
 
@@ -502,6 +503,10 @@ async function openEditor(existing) {
       await refresh();
     }));
   }
+  actions.append(btn('Attachments', '', () => {
+    if (!docId) return ui.warn('Save the draft first, then attach files.');
+    openAttachmentsDialog(ctx, { table: 'sales_documents', recordId: docId, title: `Attachments: ${LABEL} ${(existing && existing.doc_no) || 'draft'}` });
+  }));
   actions.append(el('span', 'spacer'), btn('Cancel', 'btn-ghost', close));
   const saveBtn = btn('Save draft', '', () => {});
   const postBtn = btn('Post', 'btn-primary', () => {});
@@ -638,12 +643,15 @@ async function openViewer(d) {
       : `Cost returned to stock: ${money(cogs)} ${base}.`);
     node.append(m);
   }
-  const viewButtons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }];
+const viewButtons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }, { label: 'Attachments', value: 'attach', className: 'btn-ghost' }];
   if (TYPE === 'credit_note' && CAN_RATE && d.currency_code === base) {
     viewButtons.push({ label: 'Refund customer', value: 'refund', className: '' });
   }
   const viewRes = await ui.dialog({ title: `${LABEL} ${d.doc_no}`, node, wide: true, dismissValue: 'close', buttons: viewButtons });
-  if (viewRes === 'refund') await refundCreditNote(d);
+  if (viewRes === 'attach') {
+    await openAttachmentsDialog(ctx, { table: 'sales_documents', recordId: d.id, title: `Attachments: ${LABEL} ${d.doc_no}` });
+    await openViewer(d);
+  } else if (viewRes === 'refund') await refundCreditNote(d);
 }
 
 async function refundCreditNote(d) {
