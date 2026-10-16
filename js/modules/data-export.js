@@ -11,7 +11,8 @@ const panel = document.getElementById('panel');
 
 const PAGE = 1000;
 const EXCEL_ROW_WARNING = 300000;
-const ORDER = { stock_balances: ['item_id', 'warehouse_id'] };   // tables without an id column need a fixed order to page safely
+const EXCEL_SHEET_MAX = 1048000;                                   // one Excel sheet holds 1,048,576 rows including the header
+const ORDER = { stock_balances: ['item_id', 'warehouse_id'] };    // tables without an id column need a fixed order to page safely
 
 let GROUPS = [];
 const checks = new Map();
@@ -59,7 +60,7 @@ async function init() {
   }
   try { await loadCatalog(); } catch (e) { ui.errorFrom(e, 'Could not load the list of tables.'); return; }
   toolbar.append(el('span', 'muted', 'Format'), formatSel, goBtn);
-  hint.textContent = 'Exports every record this company holds, one sheet (or CSV file) per table, with the original column names and ids. It leaves out user accounts, invitations, the access log and shared reference data. Attachment files are not included, only their records.';
+  hint.textContent = 'Exports every record this company holds, one sheet (or CSV file) per table, with the original column names and ids. It leaves out user accounts, invitations, the access log and shared reference data. Attachment files are not included, only their records. For very large companies choose the zip of CSV files: it keeps memory use lower and has no row limit.';
   const rows = GROUPS.map((g) => `<label style="display:flex;gap:.6rem;align-items:flex-start;padding:.5rem 0;cursor:pointer">
       <input type="checkbox" data-group="${esc(g.key)}" checked style="width:auto;margin-top:.25rem">
       <span><strong>${esc(g.label)}</strong><br><span class="muted">${g.tables.map(esc).join(', ')}</span></span></label>`).join('');
@@ -69,26 +70,49 @@ async function init() {
 
 /* ---------- reading a table ---------- */
 
-async function fetchTable(table) {
-  const col = table === 'companies' ? 'id' : 'company_id';
-  const orderCols = ORDER[table] || ['id'];
+const keyCol = (table) => (table === 'companies' ? 'id' : 'company_id');
+
+// Tables with an id column are read by key (id greater than the last id seen), which stays fast however large the table is.
+async function fetchByKey(table, onProgress) {
+  const col = keyCol(table);
   const rows = [];
-  let ordered = true;
-  let from = 0;
+  let last = null;
   for (;;) {
-    let q = supabase.from(table).select('*').eq(col, ctx.companyId);
-    if (ordered) orderCols.forEach((c) => { q = q.order(c); });
-    const { data, error } = await q.range(from, from + PAGE - 1);
+    let q = supabase.from(table).select('*').eq(col, ctx.companyId).order('id').limit(PAGE);
+    if (last !== null) q = q.gt('id', last);
+    const { data, error } = await q;
     if (error) {
-      // a table without those columns: read it unordered, from the start
-      if (ordered && error.code === '42703' && !String(error.message).includes(col)) { ordered = false; from = 0; rows.length = 0; continue; }
+      // a table without an id column: read it by position instead
+      if (last === null && error.code === '42703' && !String(error.message).includes(col)) return null;
       throw error;
     }
     rows.push(...data);
+    if (onProgress) onProgress(rows.length);
     if (data.length < PAGE) break;
-    from += PAGE;
+    last = data[data.length - 1].id;
   }
   return rows;
+}
+
+async function fetchByPosition(table, orderCols, onProgress) {
+  const col = keyCol(table);
+  const rows = [];
+  for (let from = 0; ; from += PAGE) {
+    let q = supabase.from(table).select('*').eq(col, ctx.companyId);
+    orderCols.forEach((c) => { q = q.order(c); });
+    const { data, error } = await q.range(from, from + PAGE - 1);
+    if (error) throw error;
+    rows.push(...data);
+    if (onProgress) onProgress(rows.length);
+    if (data.length < PAGE) break;
+  }
+  return rows;
+}
+
+async function fetchTable(table, onProgress) {
+  if (ORDER[table]) return fetchByPosition(table, ORDER[table], onProgress);
+  const byKey = await fetchByKey(table, onProgress);
+  return byKey !== null ? byKey : fetchByPosition(table, [], onProgress);
 }
 
 const cellValue = (v) => {
@@ -153,18 +177,24 @@ async function run() {
   const lines = [];
   const show = (extra) => { status.innerHTML = `<p class="muted">${[...lines, extra].filter(Boolean).map(esc).join('<br>')}</p>`; };
 
-  const data = [];
+  const asCsv = formatSel.value === 'csv';
+  const data = [];          // Excel: every table is kept until the workbook is built
   const contents = [];
+  let zip = null;           // CSV: each table goes straight into the zip, so the rows can be released
   let total = 0;
+  let read = 0;
   try {
+    if (asCsv) zip = new (await loadJSZip())();
     for (let i = 0; i < tables.length; i++) {
       const t = tables[i];
       show(`Reading ${t} (${i + 1} of ${tables.length})...`);
       try {
-        const raw = await fetchTable(t);
+        const raw = await fetchTable(t, (n) => show(`Reading ${t} (${i + 1} of ${tables.length}): ${num0(n)} records...`));
         const s = shape(raw);
-        data.push({ table: t, ...s });
+        if (asCsv) zip.file(`${t}.csv`, toCsv(s.cols, s.rows));
+        else data.push({ table: t, ...s });
         total += s.rows.length;
+        read += 1;
         contents.push({ table: t, records: s.rows.length, status: 'Exported' });
         lines.push(`${t}: ${num0(s.rows.length)} records`);
       } catch (e) {
@@ -173,19 +203,27 @@ async function run() {
       }
     }
 
-    if (!data.length) { show(''); return ui.warn('Nothing could be read.'); }
-    if (formatSel.value === 'xlsx' && total > EXCEL_ROW_WARNING) {
-      const ok = await ui.confirm({
-        title: 'Large export',
-        message: `This export has ${num0(total)} records. Building one Excel workbook this big can be slow or run out of memory in the browser. A zip of CSV files is safer. Continue with Excel?`,
-        confirmText: 'Continue with Excel',
-      });
-      if (!ok) { show('Cancelled. Choose "Zip of CSV files" and export again.'); return; }
+    if (!read) { show(''); return ui.warn('Nothing could be read.'); }
+
+    if (!asCsv) {
+      const tooBig = data.filter((d) => d.rows.length > EXCEL_SHEET_MAX).map((d) => d.table);
+      if (tooBig.length) {
+        show('');
+        return ui.warn(`${tooBig.join(', ')} has more rows than one Excel sheet can hold. Choose "Zip of CSV files" and export again.`);
+      }
+      if (total > EXCEL_ROW_WARNING) {
+        const ok = await ui.confirm({
+          title: 'Large export',
+          message: `This export has ${num0(total)} records. Building one Excel workbook this big can be slow or run out of memory in the browser. A zip of CSV files is safer. Continue with Excel?`,
+          confirmText: 'Continue with Excel',
+        });
+        if (!ok) { show('Cancelled. Choose "Zip of CSV files" and export again.'); return; }
+      }
     }
 
     const stamp = `${ctx.company.name.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${todayIso()}`;
     show('Building the file...');
-    if (formatSel.value === 'xlsx') {
+    if (!asCsv) {
       const sheets = [{
         name: 'Contents', title: 'Full data export', subtitle: `${ctx.company.name}, exported ${todayIso()}`,
         rows: contents, totals: false,
@@ -197,14 +235,11 @@ async function run() {
       }));
       await exportSheets(`full-export-${stamp}.xlsx`, sheets);
     } else {
-      const JSZip = await loadJSZip();
-      const zip = new JSZip();
       zip.file('contents.csv', toCsv(['table', 'records', 'status'], contents));
-      data.forEach((d) => zip.file(`${d.table}.csv`, toCsv(d.cols, d.rows)));
       download(await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' }), `full-export-${stamp}.zip`);
     }
     const skipped = contents.filter((c) => c.status !== 'Exported').length;
-    show(`Done. ${num0(total)} records from ${data.length} tables.${skipped ? ` ${skipped} table(s) were skipped: see the list above.` : ''}`);
+    show(`Done. ${num0(total)} records from ${read} tables.${skipped ? ` ${skipped} table(s) were skipped: see the list above.` : ''}`);
     ui.success('Export ready.');
   } catch (e) {
     ui.errorFrom(e, 'Could not export.');
