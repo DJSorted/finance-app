@@ -123,6 +123,22 @@ export async function deleteAttachment(row) {
   if (!data || !data.length) throw new Error('You do not have permission to delete this.');
 }
 
+// Change the name and description of an attachment, and the web address if it is a link
+export async function updateAttachment(row, { name, description, url }) {
+  const fileName = String(name || '').trim();
+  if (!fileName) throw new Error('Enter a name.');
+  if (fileName.length > 200) throw new Error('The name is too long.');
+  const patch = { file_name: fileName, description: String(description || '').trim() || null };
+  if (row.url) {
+    const err = validateUrl(url);
+    if (err) throw new Error(err);
+    patch.url = new URL(String(url).trim()).href;
+  }
+  const { data, error } = await supabase.from('attachments').update(patch).eq('id', row.id).select('id');
+  if (error) throw error;
+  if (!data || !data.length) throw new Error('You do not have permission to edit this.');
+}
+
 export function makeModal(title, cls = 'modal') {
   const prev = document.activeElement;
   const backdrop = el('div', 'modal-backdrop');
@@ -140,6 +156,36 @@ export function makeModal(title, cls = 'modal') {
   backdrop.append(box);
   document.body.append(backdrop);
   return { box, close };
+}
+
+// Edit dialog shared by the attach dialog and the attachments page. Resolves true when something was saved.
+export function editAttachmentDialog(row) {
+  return new Promise((resolve) => {
+    const { box, close: closeModal } = makeModal(`Edit ${row.url ? 'link' : 'file details'}`);
+    let saved = false;
+    const close = () => { closeModal(); resolve(saved); };
+    const field = (text, input, full) => { const w = el('div', `field${full ? ' full' : ''}`); w.append(el('label', '', text), input); return w; };
+    const nameIn = el('input'); nameIn.value = row.file_name || '';
+    const descIn = el('input'); descIn.value = row.description || '';
+    const urlIn = el('input'); urlIn.type = 'url'; urlIn.value = row.url || '';
+    const grid = el('div', 'form-grid');
+    grid.append(field('Name', nameIn, true), field('Description', descIn, true));
+    if (row.url) grid.append(field('Link', urlIn, true));
+    box.append(grid);
+    if (!row.url) box.append(el('p', 'muted', 'This changes the name shown in the system. The stored file itself is not changed.'));
+    const actions = el('div', 'modal-actions');
+    const saveBtn = btn('Save', 'btn-primary', async () => {
+      saveBtn.disabled = true;
+      try {
+        await updateAttachment(row, { name: nameIn.value, description: descIn.value, url: urlIn.value });
+        saved = true;
+        close();
+      } catch (e) { ui.errorFrom(e, 'Could not save the changes.'); } finally { saveBtn.disabled = false; }
+    });
+    actions.append(el('span', 'spacer'), btn('Cancel', 'btn-ghost', close), saveBtn);
+    box.append(actions);
+    nameIn.focus();
+  });
 }
 
 // The attach button on any record screen calls this: openAttachmentsDialog(ctx, { table: 'fixed_assets', recordId, title })
@@ -160,7 +206,7 @@ export function openAttachmentsDialog(ctx, { table, recordId, title }) {
       listEl.innerHTML = `<div class="table-wrap"><table class="grid"><thead><tr><th>Name</th><th>Description</th><th>Size</th><th>Added</th><th></th></tr></thead><tbody>${
         data.map((r) => `<tr data-id="${r.id}"><td>${esc(r.file_name)}${r.url ? ' <span class="badge">Link</span>' : ''}</td><td>${esc(r.description || '')}</td>
           <td>${r.url ? '' : fmtSize(r.size_bytes)}</td><td>${String(r.uploaded_at).slice(0, 10)}</td>
-          <td><div class="row-actions"><button class="btn btn-sm" data-act="open">Open</button>${ctx.canEdit ? '<button class="btn btn-sm" data-act="delete">Delete</button>' : ''}</div></td></tr>`).join('')
+          <td><div class="row-actions"><button class="btn btn-sm" data-act="open">Open</button>${canUpload ? '<button class="btn btn-sm" data-act="edit">Edit</button>' : ''}${ctx.canEdit ? '<button class="btn btn-sm" data-act="delete">Delete</button>' : ''}</div></td></tr>`).join('')
       }</tbody></table></div>`;
       listEl._rows = data;
     }
@@ -170,6 +216,10 @@ export function openAttachmentsDialog(ctx, { table, recordId, title }) {
       const row = (listEl._rows || []).find((r) => r.id === b.closest('tr').dataset.id);
       if (!row) return;
       if (b.dataset.act === 'open') return openAttachment(row);
+      if (b.dataset.act === 'edit') {
+        if (await editAttachmentDialog(row)) { ui.success('Saved.'); await refresh(); }
+        return;
+      }
       const ok = await ui.confirm({ title: 'Delete', message: `Delete ${row.file_name}? This cannot be undone.`, confirmText: 'Delete' });
       if (!ok) return;
       try { await deleteAttachment(row); ui.success('Deleted.'); await refresh(); } catch (err) { ui.errorFrom(err, 'Could not delete.'); }

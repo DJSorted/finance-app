@@ -3,6 +3,7 @@ import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
 import { logoUrl } from '../core/logo.js';
+import { openAttachmentsDialog } from '../core/attachments.js';
 
 const ctx = await startPage();
 
@@ -956,6 +957,9 @@ async function openEditor(existing) {
     if (existing.status !== 'enquiry') {
       actions.append(btn('Invoice and deposit', '', () => { close(); openViewer(existing); }));
     }
+    actions.append(btn('Attachments', '', () => openAttachmentsDialog(ctx, {
+      table: 'bookings', recordId: existing.id, title: `Attachments: ${existing.booking_no}`,
+    })));
   }
   const saveBtn = btn('Save booking', 'btn-primary', () => {});
   actions.append(el('span', 'spacer'), btn('Close', 'btn-ghost', close), saveBtn);
@@ -1073,7 +1077,7 @@ async function openViewer(b) {
     node.append(box);
   }
 
-  const buttons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }];
+  const buttons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }, { label: 'Attachments', value: 'attach', className: 'btn-ghost' }];
   if (b.undispatched && (b.status === 'confirmed' || b.status === 'dispatched')) buttons.push({ label: 'Print pick list', value: 'picklist', className: '' });
   if (b.status === 'dispatched') buttons.push({ label: 'Print return checklist', value: 'retlist', className: '' });
   if (CAN_BOOK && INVOICEABLE.includes(b.status)) buttons.push({ label: 'Create invoice', value: 'invoice', className: 'btn-primary' });
@@ -1084,7 +1088,11 @@ async function openViewer(b) {
   if (CAN_BOOK && b.status === 'dispatched') buttons.push({ label: 'Check in return', value: 'return', className: '' });
   if (CAN_CLOSE && b.status === 'returned') buttons.push({ label: 'Close booking', value: 'closebk', className: '' });
   const res = await ui.dialog({ title: b.booking_no, node, wide: true, dismissValue: 'close', buttons });
-  if (res === 'picklist') { await printPickList(b); await reopen(b.id); }
+  if (res === 'attach') {
+    await openAttachmentsDialog(ctx, { table: 'bookings', recordId: b.id, title: `Attachments: ${b.booking_no}` });
+    await reopen(b.id);
+  }
+  else if (res === 'picklist') { await printPickList(b); await reopen(b.id); }
   else if (res === 'retlist') { await printReturnList(b); await reopen(b.id); }
   else if (res === 'invoice') await openInvoiceDialog(b, true);
   else if (res === 'setdep') { if (await setDeposit(b)) await reopen(b.id); }

@@ -2,6 +2,7 @@ import { supabase } from '../core/supabase.js';
 import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
+import { openAttachmentsDialog } from '../core/attachments.js';
 
 const ctx = await startPage();
 
@@ -284,6 +285,10 @@ async function openEditor(existing) {
       await refresh();
     }));
   }
+  actions.append(btn('Attachments', '', () => {
+    if (!orderId) return ui.warn('Save the draft first, then attach files.');
+    openAttachmentsDialog(ctx, { table: 'purchase_orders', recordId: orderId, title: `Attachments: Purchase order ${(existing && existing.po_no) || 'draft'}` });
+  }));
   actions.append(el('span', 'spacer'), btn('Cancel', 'btn-ghost', close));
   const saveBtn = btn('Save draft', CAN_APPROVE ? '' : 'btn-primary', () => {});
   actions.append(saveBtn);
@@ -374,7 +379,7 @@ async function openViewer(o) {
     <td class="num"><strong>${money(o.total, dec)}</strong></td></tr></tbody></table>`;
   node.append(t);
 
-  const buttons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }];
+  const buttons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }, { label: 'Attachments', value: 'attach', className: 'btn-ghost' }];
   if (o.status === 'approved') {
     if (CAN_APPROVE && !anyReceived) {
       buttons.push({ label: 'Cancel order', value: 'cancel', className: 'btn-danger' });
@@ -384,6 +389,11 @@ async function openViewer(o) {
     if (CAN_DRAFT) buttons.push({ label: 'Receive goods', value: 'receive', className: 'btn-primary' });
   }
   const res = await ui.dialog({ title: `Purchase order ${o.po_no || ''}`, node, buttons, dismissValue: 'close', wide: true });
+  if (res === 'attach') {
+    await openAttachmentsDialog(ctx, { table: 'purchase_orders', recordId: o.id, title: `Attachments: Purchase order ${o.po_no || ''}` });
+    await openViewer(o);
+    return;
+  }
   if (res === 'receive') { location.href = `/pages/goods-received.html?order=${o.id}`; return; }
   const action = { cancel: 'cancel', revert: 'revert', close_order: 'close' }[res];
   if (!action) return;

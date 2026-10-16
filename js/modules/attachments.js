@@ -3,7 +3,7 @@ import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import {
   TABLE_LABELS, ALLOWED_EXT, MAX_BYTES, esc, fmtSize, sizeText, validateFile, validateUrl,
-  uploadAttachment, addAttachmentLink, openAttachment, deleteAttachment, makeModal,
+  uploadAttachment, addAttachmentLink, openAttachment, deleteAttachment, editAttachmentDialog, makeModal,
 } from '../core/attachments.js';
 
 const ctx = await startPage();
@@ -83,7 +83,7 @@ function render() {
   const body = list.map((r) => `<tr data-id="${r.id}"><td>${String(r.uploaded_at).slice(0, 10)}</td>
     <td>${esc(r.file_name)}${r.url ? ' <span class="badge">Link</span>' : ''}</td>
     <td>${esc(linkText(r))}</td><td>${esc(r.description || '')}</td><td class="num">${sizeText(r)}</td>
-    <td><div class="row-actions"><button class="btn btn-sm" data-act="open">Open</button>${ctx.canEdit ? '<button class="btn btn-sm" data-act="delete">Delete</button>' : ''}</div></td></tr>`).join('');
+    <td><div class="row-actions"><button class="btn btn-sm" data-act="open">Open</button>${CAN_UPLOAD ? '<button class="btn btn-sm" data-act="edit">Edit</button>' : ''}${ctx.canEdit ? '<button class="btn btn-sm" data-act="delete">Delete</button>' : ''}</div></td></tr>`).join('');
   panel.innerHTML = `<div class="table-wrap"><table class="grid"><thead><tr><th>Added</th><th>Name</th><th>Linked to</th><th>Description</th>
     <th style="text-align:right">Size</th><th></th></tr></thead><tbody>${body}
     <tr class="row-root"><td colspan="4">${list.length} item(s)</td><td class="num">${fmtSize(total)}</td><td></td></tr></tbody></table></div>`;
@@ -95,6 +95,10 @@ panel.addEventListener('click', async (e) => {
   const row = rows.find((r) => r.id === b.closest('tr').dataset.id);
   if (!row) return;
   if (b.dataset.act === 'open') return openAttachment(row);
+  if (b.dataset.act === 'edit') {
+    if (await editAttachmentDialog(row)) { ui.success('Saved.'); await refresh(); }
+    return;
+  }
   const ok = await ui.confirm({ title: 'Delete', message: `Delete ${row.file_name}? This cannot be undone.`, confirmText: 'Delete' });
   if (!ok) return;
   try { await deleteAttachment(row); ui.success('Deleted.'); await refresh(); } catch (err) { ui.errorFrom(err, 'Could not delete.'); }
@@ -171,7 +175,7 @@ async function init() {
   searchEl.addEventListener('input', () => { clearTimeout(t); t = setTimeout(render, 250); });
   toolbar.append(tableSel, searchEl, btn('Refresh', '', refresh), el('span', 'spacer'));
   if (CAN_UPLOAD) toolbar.append(btn('Add file or link', 'btn-primary', addItem));
-  hint.textContent = 'Every file and link attached to a record in this company. Uploaded files are private and open through a short-lived link. Only owners, admins and accountants can delete.';
+  hint.textContent = 'Every file and link attached to a record in this company. Uploaded files are private and open through a short-lived link. Owners, admins, accountants and clerks can edit names and descriptions; only owners, admins and accountants can delete.';
   await refresh();
 }
 

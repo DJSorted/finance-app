@@ -2,6 +2,7 @@ import { supabase } from '../core/supabase.js';
 import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
+import { openAttachmentsDialog } from '../core/attachments.js';
 
 const ctx = await startPage();
 
@@ -498,6 +499,12 @@ async function openEditor(existing) {
       await refresh();
     }));
   }
+  actions.append(btn('Attachments', '', () => {
+    if (!docId) return ui.warn('Save the draft first, then attach files.');
+    openAttachmentsDialog(ctx, {
+      table: 'purchase_documents', recordId: docId, title: `Attachments: ${LABEL} ${(existing && existing.doc_no) || 'draft'}`,
+    });
+  }));
   actions.append(el('span', 'spacer'), btn('Cancel', 'btn-ghost', close));
   const saveBtn = btn('Save draft', '', () => {});
   const postBtn = btn('Post', 'btn-primary', () => {});
@@ -616,10 +623,14 @@ async function openViewer(d) {
     <td class="num"><strong>${money(d.tax_total, dec)}</strong></td></tr>
     <tr><td colspan="6"><strong>Amount ${TYPE === 'bill' ? 'payable' : 'credited'}</strong></td><td colspan="2" class="num"><strong>${money(d.gross_total, dec)}</strong></td></tr></tbody></table>`;
   node.append(wrapT);
-  await ui.dialog({
+  const res = await ui.dialog({
     title: `${LABEL} ${d.doc_no}`, node, wide: true, dismissValue: 'close',
-    buttons: [{ label: 'Close', value: 'close', className: 'btn-ghost' }],
+    buttons: [{ label: 'Attachments', value: 'attach', className: '' }, { label: 'Close', value: 'close', className: 'btn-ghost' }],
   });
+  if (res === 'attach') {
+    await openAttachmentsDialog(ctx, { table: 'purchase_documents', recordId: d.id, title: `Attachments: ${LABEL} ${d.doc_no}` });
+    await openViewer(d);
+  }
 }
 
 if (ctx) {

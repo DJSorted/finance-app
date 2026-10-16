@@ -2,6 +2,7 @@ import { supabase } from './supabase.js';
 import { ui } from './ui.js';
 import { exportSheets } from './export.js';
 import { openSetupImport, hasImport } from './setup-import.js';
+import { openAttachmentsDialog, TABLE_LABELS } from './attachments.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -27,7 +28,8 @@ function link(text, href, cls = '') {
 //        lookups(ctx), columns(lk), fields(lk, row), toForm(row, lk), validate(v, row, rows), toPayload(v, row),
 //        beforeDelete(row, rows), duplicateMessage,
 //        toolbarLinks: [{ text, href, editOnly }]       extra buttons in the toolbar that open another page
-//        rowLinks: [{ text, href(row) }] }              extra buttons on each row (shown to people who can edit)
+//        rowLinks: [{ text, href(row) }]                extra buttons on each row (shown to people who can edit)
+//        attach: false }                                turns off the Attach button (on by default for tables that can hold attachments)
 // Every column needs header and text(row); html(row) is optional and must escape its own output.
 export async function setupPage(ctx, cfg) {
   const toolbar = document.getElementById('toolbar');
@@ -38,6 +40,7 @@ export async function setupPage(ctx, cfg) {
 
   const canAdd = ctx.canEdit && cfg.canAdd !== false;
   const canDelete = ctx.canEdit && cfg.canDelete !== false;
+  const canAttach = cfg.attach !== false && !!TABLE_LABELS[cfg.table];
   let rows = [];
   let lk = {};
   let term = '';
@@ -96,10 +99,12 @@ export async function setupPage(ctx, cfg) {
     const head = cols.map((c) => `<th${c.num ? ' style="text-align:right"' : ''}>${esc(c.header)}</th>`).join('') + '<th></th>';
     const body = list.map((r) => {
       const tds = cols.map((c) => `<td${c.num ? ' class="num"' : ''}>${c.html ? c.html(r) : esc(c.text(r))}</td>`).join('');
-      const extra = (cfg.rowLinks || []).map((l) => `<a class="btn btn-sm" href="${esc(l.href(r))}">${esc(l.text)}</a>`).join('');
-      const acts = ctx.canEdit
-        ? `<div class="row-actions">${extra}<button class="btn btn-sm" data-act="edit">Edit</button>${canDelete ? '<button class="btn btn-sm" data-act="del">Delete</button>' : ''}</div>`
+      const attachBtn = canAttach ? '<button class="btn btn-sm" data-act="attach">Attach</button>' : '';
+      const extra = ctx.canEdit ? (cfg.rowLinks || []).map((l) => `<a class="btn btn-sm" href="${esc(l.href(r))}">${esc(l.text)}</a>`).join('') : '';
+      const editBtns = ctx.canEdit
+        ? `<button class="btn btn-sm" data-act="edit">Edit</button>${canDelete ? '<button class="btn btn-sm" data-act="del">Delete</button>' : ''}`
         : '';
+      const acts = attachBtn || extra || editBtns ? `<div class="row-actions">${extra}${attachBtn}${editBtns}</div>` : '';
       return `<tr data-id="${r.id}" class="${r.is_active === false ? 'inactive' : ''}">${tds}<td>${acts}</td></tr>`;
     }).join('');
     panel.innerHTML = `<div class="table-wrap"><table class="grid"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
@@ -155,9 +160,15 @@ export async function setupPage(ctx, cfg) {
 
   panel.addEventListener('click', async (e) => {
     const t = e.target.closest('[data-act]');
-    if (!t || !ctx.canEdit) return;
+    if (!t) return;
     const row = rows.find((r) => r.id === t.closest('tr').dataset.id);
     if (!row) return;
+    if (t.dataset.act === 'attach' && canAttach) {
+      const name = [row.code, row.name].filter(Boolean).join(' - ');
+      await openAttachmentsDialog(ctx, { table: cfg.table, recordId: row.id, title: `Attachments: ${cfg.noun}${name ? ` ${name}` : ''}` });
+      return;
+    }
+    if (!ctx.canEdit) return;
     if (t.dataset.act === 'edit') await openForm(row);
     else if (t.dataset.act === 'del' && canDelete) await doDelete(row);
   });
