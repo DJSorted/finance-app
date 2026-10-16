@@ -24,6 +24,7 @@ let taxes = [];
 let items = [];
 let accounts = [];
 let assetCats = [];
+let projects = [];
 let base = '';
 let statusFilter = 'all';
 let needle = '';
@@ -60,12 +61,13 @@ function calcDue(termsId, dateStr) {
   d.setUTCDate(d.getUTCDate() + t.days);
   return d.toISOString().slice(0, 10);
 }
+const projLabel = (p) => `${p.code} - ${p.name}`;
 
 /* ---------- data ---------- */
 
 async function load() {
   const cid = ctx.companyId;
-  const [d, s, cu, t, tx, it, a, ac] = await Promise.all([
+  const [d, s, cu, t, tx, it, a, ac, pr] = await Promise.all([
     supabase.from('purchase_documents').select('*, suppliers(code, name)').eq('company_id', cid).eq('doc_type', TYPE)
       .order('doc_date', { ascending: false }).order('created_at', { ascending: false }).limit(300),
     supabase.from('suppliers').select('id, code, name').eq('company_id', cid).eq('is_active', true).order('code'),
@@ -77,8 +79,9 @@ async function load() {
     supabase.from('gl_accounts').select('id, code, name').eq('company_id', cid)
       .eq('is_posting', true).eq('is_active', true).is('control_type', null).order('code'),
     supabase.from('asset_categories').select('id, code, name').eq('company_id', cid).eq('is_active', true).order('code'),
+    supabase.from('projects').select('id, code, name, status').eq('company_id', cid).order('code'),
   ]);
-  for (const r of [d, s, cu, t, tx, it, a, ac]) if (r.error) throw r.error;
+  for (const r of [d, s, cu, t, tx, it, a, ac, pr]) if (r.error) throw r.error;
   docs = d.data;
   suppliers = s.data;
   currencies = cu.data;
@@ -87,6 +90,7 @@ async function load() {
   items = it.data.filter((x) => x.item_categories && x.item_categories.is_purchasable);
   accounts = a.data;
   assetCats = ac.data;
+  projects = pr.data;
   base = (currencies.find((x) => x.is_base) || {}).code || '';
 }
 
@@ -174,10 +178,13 @@ async function doExport() {
 async function openEditor(existing) {
   let docId = existing ? existing.id : null;
   let seed = [];
+  let seedProject = '';
   const rlInfo = new Map();
   if (existing) {
     const { data, error } = await supabase.from('purchase_document_lines').select('*').eq('document_id', existing.id).order('line_no');
     if (error) return ui.errorFrom(error, 'Could not load the document lines.');
+    const tagged = data.find((l) => l.project_id);
+    seedProject = tagged ? tagged.project_id : '';
     const ids = data.map((l) => l.receipt_line_id).filter(Boolean);
     if (ids.length) {
       const rl = await supabase.from('goods_receipt_lines')
@@ -222,6 +229,12 @@ async function openEditor(existing) {
   termSel.value = existing ? (existing.payment_terms_id || '') : '';
   const dueIn = el('input'); dueIn.type = 'date'; dueIn.value = existing ? existing.due_date : '';
   const refIn = el('input'); refIn.value = existing ? (existing.reference || '') : '';
+  const projSel = el('select');
+  option(projSel, '', 'No project');
+  projects.filter((p) => p.status === 'open' || p.id === seedProject).forEach((p) => {
+    option(projSel, p.id, projLabel(p) + (p.status === 'open' ? '' : ` (${p.status})`));
+  });
+  projSel.value = seedProject;
   const rateIn = el('input'); rateIn.type = 'number'; rateIn.step = 'any';
   const notesIn = el('input'); notesIn.value = existing ? (existing.notes || '') : '';
 
@@ -232,7 +245,7 @@ async function openEditor(existing) {
   const head = el('div', 'form-grid');
   head.append(field('Supplier *', supSel, true), field('Supplier document number *', srefIn), field('Date *', dateIn),
     field('Currency', curSel), field('Payment terms', termSel), field('Due date', dueIn),
-    field('Our reference', refIn),
+    field('Our reference', refIn), field('Project', projSel),
     field(CAN_RATE ? 'Exchange rate (override allowed)' : 'Exchange rate', rateIn), field('Notes', notesIn, true));
   box.append(head);
 
@@ -532,6 +545,7 @@ async function openEditor(existing) {
       p_date: dateIn.value, p_due: dueIn.value || null, p_terms: termSel.value || null, p_currency: curSel.value,
       p_reference: refIn.value, p_notes: notesIn.value,
       p_manual_rate: (curSel.value !== base && rateManual && Number(rateIn.value) > 0) ? Number(rateIn.value) : null,
+      p_project: projSel.value || null,
       p_lines,
     });
     if (error) throw error;
@@ -577,18 +591,21 @@ async function openViewer(d) {
   ]);
   if (l.error) return ui.errorFrom(l.error, 'Could not load the document lines.');
   const dec = decOf(d.currency_code);
+  const tagged = l.data.find((x) => x.project_id);
+  const proj = tagged ? projects.find((p) => p.id === tagged.project_id) : null;
 
   const node = el('div');
   const info = el('p', 'muted',
     [`${supName(d)}`, `Supplier document ${d.supplier_ref}`,
       `Date ${d.doc_date} · Due ${d.due_date}${d.reference ? ` · Our ref ${d.reference}` : ''}`,
       d.currency_code === base ? `Currency ${d.currency_code}` : `Currency ${d.currency_code} · Rate ${Number(d.fx_rate).toFixed(6)} to ${base}`,
+      proj ? `Project ${projLabel(proj)}` : '',
       j.data && j.data.journal_no ? `Ledger journal ${j.data.journal_no}` : ''].filter(Boolean).join('\n'));
   info.style.whiteSpace = 'pre-line';
   node.append(info);
 
   const body = l.data.map((x, i) => `<tr><td>${i + 1}</td><td>${esc(x.items ? x.items.code : '')}</td>
-    ${esc(x.description)}${x.receipt_line_id ? ' <span class="badge">Goods received</span>' : ''}${x.asset_category_id ? ' <span class="badge">Fixed asset</span>' : ''}
+    <td>${esc(x.description)}${x.receipt_line_id ? ' <span class="badge">Goods received</span>' : ''}${x.asset_category_id ? ' <span class="badge">Fixed asset</span>' : ''}</td>
     <td class="num">${money(x.quantity, 2)}</td><td class="num">${money(x.unit_price, dec)}</td>
     <td class="num">${Number(x.tax_rate)}%</td><td class="num">${money(x.net_amount, dec)}</td><td class="num">${money(x.tax_amount, dec)}</td></tr>`).join('');
   const wrapT = el('div', 'table-wrap');
