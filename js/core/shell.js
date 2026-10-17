@@ -36,6 +36,7 @@ const NAV = [
     { href: '/pages/data-info.html', label: 'Data & Records' },
     { href: '/pages/attachments.html', label: 'Attachments' },
     { href: '/pages/data-export.html', label: 'Full Data Export' },
+    { href: '/pages/opening-balances.html', label: 'Opening Balances', roles: ['owner', 'admin', 'accountant'] },
   ] },
   { section: 'Defaults', items: [
     { href: '/pages/company-settings.html', label: 'Company Defaults' },
