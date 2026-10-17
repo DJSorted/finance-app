@@ -102,10 +102,14 @@ async function render() {
   }
   root.append(wrap);
 
+  let reval = { rows: [], done: null, error: '' };
+  if (!closed) reval = await loadReval();
+  if (!closed) root.append(revalCard(s, reval));
+
   const actions = el('div', 'toolbar');
   actions.style.marginTop = '1rem';
   if (!closed && CAN_CLOSE) {
-    const b = btn('Close this year', 'btn-primary', () => closeYear(s, profit));
+    const b = btn('Close this year', 'btn-primary', () => closeYear(s, profit, reval));
     b.disabled = !s.can_close;
     actions.append(b);
   }
@@ -116,7 +120,74 @@ async function render() {
   panel.replaceChildren(root);
 }
 
-async function closeYear(s, profit) {
+async function loadReval() {
+  const out = { rows: [], done: null, error: '' };
+  const j = await supabase.from('journals').select('journal_no, journal_date')
+    .eq('company_id', ctx.companyId).eq('source_type', 'fx_revaluation').eq('source_id', yearId).eq('status', 'posted').limit(1);
+  if (!j.error && j.data && j.data.length) out.done = j.data[0];
+  const { data, error } = await supabase.rpc('fx_revaluation_preview', { p_year: yearId });
+  if (error) out.error = error.message || 'Could not work out the revaluation.';
+  else out.rows = data;
+  return out;
+}
+
+function revalCard(s, reval) {
+  const card = el('div', 'card');
+  card.style.marginTop = '1rem';
+  card.append(el('h4', '', 'Foreign currency revaluation'));
+  card.lastChild.style.marginTop = '0';
+  if (reval.done) {
+    card.append(el('p', 'muted', `Revalued on journal ${reval.done.journal_no}, reversed the next day. Any difference listed below arose after that.`));
+  }
+  if (reval.error) {
+    card.append(el('p', '', reval.error));
+    card.lastChild.style.color = 'var(--danger)';
+    return card;
+  }
+  if (!reval.rows.length) {
+    card.append(el('p', 'muted', 'No foreign currency debtors, creditors or bank balances need revaluing at the year-end rate.'));
+    return card;
+  }
+  const total = reval.rows.reduce((t, r) => t + Number(r.r_diff), 0);
+  const body = reval.rows.map((r) => `<tr><td>${esc(r.r_account)}</td><td>${esc(r.r_party || '')}</td><td>${esc(r.r_currency)}</td>
+    <td class="num">${money(r.r_trx)}</td><td class="num">${money(r.r_booked)}</td><td class="num">${Number(r.r_rate).toFixed(6)}</td>
+    <td class="num">${money(r.r_revalued)}</td><td class="num">${money(r.r_diff)}</td></tr>`).join('');
+  const wrap = el('div', 'table-wrap');
+  wrap.innerHTML = `<table class="grid"><thead><tr><th>Account</th><th>Customer / supplier</th><th>Cur</th>
+    <th style="text-align:right">Foreign balance</th><th style="text-align:right">Booked (${esc(s.base)})</th><th style="text-align:right">Closing rate</th>
+    <th style="text-align:right">Revalued (${esc(s.base)})</th><th style="text-align:right">Difference</th></tr></thead>
+    <tbody>${body}<tr class="row-root"><td colspan="7">Unrealised exchange ${total >= 0 ? 'gain' : 'loss'}</td><td class="num">${money(Math.abs(total))}</td></tr></tbody></table>`;
+  card.append(wrap);
+  card.append(el('p', 'muted', 'Posted before the year is closed. It goes to the exchange gains / losses account and reverses on the first day of the next year, so realised differences stay correct when the balances are settled.'));
+  if (CAN_CLOSE) {
+    const b = btn('Post revaluation', '', () => postReval(s, total));
+    card.append(b);
+  }
+  return card;
+}
+
+async function postReval(s, total) {
+  const ok = await ui.confirm({
+    title: 'Post revaluation',
+    message: `Post an unrealised exchange ${total >= 0 ? 'gain' : 'loss'} of ${money(Math.abs(total))} ${s.base} dated ${s.end_date}?\nIt reverses automatically on the next day. It can only be run once per year.`,
+    confirmText: 'Post',
+  });
+  if (!ok) return;
+  const { error } = await supabase.rpc('fx_revalue_year', { p_year: yearId });
+  if (error) return ui.errorFrom(error, 'Could not post the revaluation.');
+  ui.success('Revaluation posted.');
+  await render();
+}
+
+async function closeYear(s, profit, reval) {
+  if (reval && reval.rows.length && !reval.done) {
+    const go = await ui.confirm({
+      title: 'Foreign currency not revalued',
+      message: 'Foreign currency balances have not been revalued at the year-end rate. Close the year anyway? After closing, the revaluation can no longer be posted into this year.',
+      confirmText: 'Close anyway',
+    });
+    if (!go) return;
+  }
   const ok = await ui.confirm({
     title: `Close ${s.name}`,
     message: `Close ${s.name}?\n${s.accounts.length ? `The ${profit >= 0 ? 'profit' : 'loss'} of ${money(Math.abs(profit))} ${s.base} moves to retained earnings. ` : ''}`

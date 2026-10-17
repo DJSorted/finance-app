@@ -28,6 +28,7 @@ const NAV = [
     { href: '/pages/chart.html', label: 'Chart of Accounts' },
     { href: '/pages/reports.html', label: 'Report Layouts' },
     { href: '/pages/calendar.html', label: 'Financial Calendar' },
+    { href: '/pages/year-end.html', label: 'Year-End Close' },
     { href: '/pages/currencies.html', label: 'Currencies & Rates' },
     { href: '/pages/data-info.html', label: 'Data & Records' },
     { href: '/pages/attachments.html', label: 'Attachments' },

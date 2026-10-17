@@ -121,7 +121,7 @@ function ranges() {
 }
 
 async function loadSet(r) {
-  const { data, error } = await supabase.rpc('trial_balance', { p_company: ctx.companyId, p_from: r.from, p_to: r.to });
+  const { data, error } = await supabase.rpc('trial_balance_unclosed', { p_company: ctx.companyId, p_from: r.from, p_to: r.to });
   if (error) throw error;
   let profit = 0;
   let cashOpen = 0;

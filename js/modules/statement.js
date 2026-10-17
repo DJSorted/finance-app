@@ -144,6 +144,15 @@ function ranges() {
 }
 
 async function loadSet(r) {
+  if (IS) {
+    const pl = await supabase.rpc('pl_movements', { p_company: ctx.companyId, p_from: r.from, p_to: r.to });
+    if (pl.error) throw pl.error;
+    const plMap = new Map();
+    pl.data.forEach((x) => plMap.set(x.account_id, {
+      open: 0, dr: Number(x.debit), cr: Number(x.credit), close: Number(x.debit) - Number(x.credit),
+    }));
+    return { map: plMap, adj: 0, from: r.from, to: r.to, label: `${r.from} to ${r.to}` };
+  }
   const f = IS ? r.from : fyStartFor(r.asAt);
   const t = IS ? r.to : r.asAt;
   const { data, error } = await supabase.rpc('trial_balance', { p_company: ctx.companyId, p_from: f, p_to: t });

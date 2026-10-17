@@ -11,8 +11,8 @@ const hint = document.getElementById('hint');
 const panel = document.getElementById('panel');
 
 const CAN_APPLY = ctx ? ctx.canEdit : false;
-const KIND = { bill: 'Bill', credit_note: 'Supplier credit note', payment: 'Payment', payment_reversal: 'Payment reversal', journal: 'Journal' };
-const OPEN_KIND = { bill: 'Bill', credit_note: 'Supplier credit note', payment: 'Payment on account', journal: 'Journal' };
+const KIND = { bill: 'Bill', credit_note: 'Supplier credit note', payment: 'Payment', payment_reversal: 'Payment reversal', journal: 'Journal', revaluation: 'Exchange revaluation', revaluation_reversal: 'Revaluation reversed' };
+const OPEN_KIND = { bill: 'Bill', credit_note: 'Supplier credit note', payment: 'Payment on account', journal: 'Journal', revaluation: 'Exchange revaluation' };
 
 let suppliers = [];
 let currencies = [];
