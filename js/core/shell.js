@@ -24,6 +24,7 @@ const NAV = [
   ] },
   { section: 'Setup', items: [
     { href: '/pages/company.html', label: 'Company Profile' },
+    { href: '/pages/document-settings.html', label: 'Document Settings' },
     { href: '/pages/new-company.html', label: 'New Company' },
     { href: '/pages/members.html', label: 'Users' },
     { href: '/pages/chart.html', label: 'Chart of Accounts' },
@@ -54,6 +55,9 @@ const NAV = [
     { href: '/pages/stock-valuation.html', label: 'Stock Valuation' },
     { href: '/pages/stock-movements.html', label: 'Stock Movements' },
     { href: '/pages/price-updates.html', label: 'Price Updates' },
+  ] },
+    { section: 'Power Search', items: [
+    { href: '/pages/search.html', label: 'Search' },
   ] },
   { section: 'Manufacturing', items: [
     { href: '/pages/boms.html', label: 'Bills of Materials' },
