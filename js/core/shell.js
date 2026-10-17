@@ -29,6 +29,8 @@ const NAV = [
     { href: '/pages/reports.html', label: 'Report Layouts' },
     { href: '/pages/calendar.html', label: 'Financial Calendar' },
     { href: '/pages/year-end.html', label: 'Year-End Close' },
+    { href: '/pages/delete-company.html', label: 'Delete Company', ownerOnly: true },
+    { href: '/pages/year-end.html', label: 'Year-End Close' },
     { href: '/pages/currencies.html', label: 'Currencies & Rates' },
     { href: '/pages/data-info.html', label: 'Data & Records' },
     { href: '/pages/attachments.html', label: 'Attachments' },
@@ -233,7 +235,7 @@ function buildShell(session, memberships, active) {
   const nav = h('nav');
   NAV.forEach((s) => {
     const items = h('div', 'nav-items');
-    s.items.forEach((n) => {
+    s.items.filter((n) => !n.ownerOnly || active.role === 'owner').forEach((n) => {
       const a = h('a', normPath(n.href) === path ? 'active' : '', n.label);
       a.href = n.href;
       items.append(a);

@@ -3,6 +3,7 @@ import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
 import { createAllocationGrid } from '../core/allocation-grid.js';
+import { printStatement } from '../core/print-docs.js';
 
 const ctx = await startPage();
 
@@ -77,7 +78,7 @@ async function init() {
   toolbar.append(custSel, el('span', 'muted', 'From'), fromEl, el('span', 'muted', 'To'), toEl,
     btn('Run', 'btn-primary', run));
   if (CAN_APPLY) toolbar.append(btn('Apply credits', '', openApply));
-  toolbar.append(el('span', 'spacer'), btn('Export to Excel', '', doExport));
+  toolbar.append(el('span', 'spacer'), btn('Print', '', printIt), btn('Export to Excel', '', doExport));
   hint.textContent = 'Balances are in each document currency. Open items are at the To date, and base amounts are at the rate each document was booked.';
   if (custId) await run(); else panel.innerHTML = '<div class="card"><p class="muted">Choose a customer to see their statement.</p></div>';
 }
@@ -302,6 +303,21 @@ async function openApply() {
     } finally {
       goBtn.disabled = false;
     }
+  });
+}
+
+async function printIt() {
+  if (!ran) return ui.warn('Run the statement first.');
+  await printStatement(ctx, {
+    title: 'Statement of account', partyTable: 'customers', partyId: custId, from: fromEl.value, to: toEl.value,
+    headers: { debit: 'Debit', credit: 'Credit', balance: 'Balance' },
+    blocks: statementBlocks().map((b) => ({
+      cur: b.cur, dec: b.dec, opening: b.opening, closing: b.closing,
+      lines: b.lines.map((r) => ({ date: r.tx_date, type: KIND[r.kind] || r.kind, no: r.doc_no || '', ref: r.reference || '',
+        debit: Number(r.debit), credit: Number(r.credit), balance: r.balance })),
+    })),
+    openItems: openItems.map((i) => ({ type: KIND[i.doc_kind] || i.doc_kind, no: i.doc_no || '', date: i.doc_date,
+      due: i.doc_kind === 'invoice' ? i.due_date : '', cur: i.currency_code, outstanding: Number(i.outstanding) })),
   });
 }
 

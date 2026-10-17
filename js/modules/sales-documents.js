@@ -2,6 +2,7 @@ import { supabase } from '../core/supabase.js';
 import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
+import { printSalesDocument } from '../core/print-docs.js';
 import { openAttachmentsDialog } from '../core/attachments.js';
 
 const ctx = await startPage();
@@ -644,10 +645,12 @@ async function openViewer(d) {
     node.append(m);
   }
 const viewButtons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }, { label: 'Attachments', value: 'attach', className: 'btn-ghost' }];
+  viewButtons.push({ label: 'Print', value: 'print', className: '' });
   if (TYPE === 'credit_note' && CAN_RATE && d.currency_code === base) {
     viewButtons.push({ label: 'Refund customer', value: 'refund', className: '' });
   }
   const viewRes = await ui.dialog({ title: `${LABEL} ${d.doc_no}`, node, wide: true, dismissValue: 'close', buttons: viewButtons });
+  if (viewRes === 'print') { await printSalesDocument(ctx, d); await openViewer(d); return; }
   if (viewRes === 'attach') {
     await openAttachmentsDialog(ctx, { table: 'sales_documents', recordId: d.id, title: `Attachments: ${LABEL} ${d.doc_no}` });
     await openViewer(d);

@@ -2,6 +2,7 @@ import { supabase } from '../core/supabase.js';
 import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
+import { printPurchaseOrder } from '../core/print-docs.js';
 import { openAttachmentsDialog } from '../core/attachments.js';
 
 const ctx = await startPage();
@@ -388,7 +389,9 @@ async function openViewer(o) {
     if (CAN_APPROVE) buttons.push({ label: 'Close order', value: 'close_order', className: '' });
     if (CAN_DRAFT) buttons.push({ label: 'Receive goods', value: 'receive', className: 'btn-primary' });
   }
+  buttons.push({ label: 'Print', value: 'print', className: '' });
   const res = await ui.dialog({ title: `Purchase order ${o.po_no || ''}`, node, buttons, dismissValue: 'close', wide: true });
+  if (res === 'print') { await printPurchaseOrder(ctx, o); await openViewer(o); return; }
   if (res === 'attach') {
     await openAttachmentsDialog(ctx, { table: 'purchase_orders', recordId: o.id, title: `Attachments: Purchase order ${o.po_no || ''}` });
     await openViewer(o);
