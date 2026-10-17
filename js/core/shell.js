@@ -14,6 +14,7 @@ const NAV = [
     { href: '/pages/general-ledger.html', label: 'General Ledger' },
     { href: '/pages/open-items.html', label: 'Open Items' },
     { href: '/pages/party-ledgers.html', label: 'Debtors & Creditors Ledger' },
+    { href: '/pages/audit-log.html', label: 'Audit Log', roles: ['owner', 'admin', 'accountant'] },
   ] },
   { section: 'Reports', items: [
     { href: '/pages/income-statement.html', label: 'Income Statement' },
@@ -235,7 +236,7 @@ function buildShell(session, memberships, active) {
   const nav = h('nav');
   NAV.forEach((s) => {
     const items = h('div', 'nav-items');
-    s.items.filter((n) => !n.ownerOnly || active.role === 'owner').forEach((n) => {
+    s.items.filter((n) => (!n.ownerOnly || active.role === 'owner') && (!n.roles || n.roles.includes(active.role))).forEach((n) => {
       const a = h('a', normPath(n.href) === path ? 'active' : '', n.label);
       a.href = n.href;
       items.append(a);
