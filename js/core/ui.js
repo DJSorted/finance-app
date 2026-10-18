@@ -64,20 +64,21 @@ export function dialog({ title, message, node, buttons, dismissValue = null, wid
 
 // Standard form dialog used by every setup screen.
 // fields: [{ name, label, type: text|number|select|checkbox|textarea, required, options:[{value,label}], hint, full, placeholder, noEnter }]
+// cols: 3 gives a wider dialog with three columns, so long forms fit without scrolling.
 // onSubmit(values) may throw; the dialog then stays open and shows the error.
 // Resolves true when saved, false when cancelled.
-function formDialog({ title, fields, values = {}, submitText = 'Save', onSubmit }) {
+function formDialog({ title, fields, values = {}, submitText = 'Save', cols = 2, onSubmit }) {
   return new Promise((resolve) => {
     const prevFocus = document.activeElement;
     const backdrop = el('div', 'modal-backdrop');
-    const box = el('div', 'modal wide');
+    const box = el('div', 'modal wide' + (cols === 3 ? ' form-wide' : ''));
     box.setAttribute('role', 'dialog');
     box.setAttribute('aria-modal', 'true');
     box.append(el('h3', 'modal-title', title));
 
     const form = el('form');
     form.noValidate = true;
-    const grid = el('div', 'form-grid');
+    const grid = el('div', 'form-grid' + (cols === 3 ? ' cols-3' : ''));
     const inputs = {};
 
     fields.forEach((f) => {

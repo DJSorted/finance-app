@@ -33,6 +33,8 @@ export const IMPORT_DEFS = {
 
   units_of_measure: [CODE, NAME, ACTIVE],
 
+  item_groups: [CODE, NAME, ACTIVE],
+
   item_categories: [
     CODE, NAME,
     { header: 'Type', field: 'item_type', type: 'enum', required: true, values: ITEM_TYPES },
@@ -56,6 +58,7 @@ export const IMPORT_DEFS = {
     CODE, NAME,
     text('Description', 'description'),
     ref('Category', 'category_id', 'categories', 'item category', { required: true }),
+    ref('Group', 'item_group_id', 'groups', 'item group'),
     ref('Unit', 'uom_id', 'uoms', 'unit of measure', { required: true }),
     { header: 'Sales price', field: 'sales_price', type: 'number' },
     ref('Price currency', 'sales_price_currency', 'currencies', 'currency', { value: 'code' }),

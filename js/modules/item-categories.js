@@ -35,7 +35,7 @@ function missing(v) {
 const ctx = await startPage();
 if (ctx) {
   await setupPage(ctx, {
-    table: 'item_categories', noun: 'Item category', plural: 'item categories', file: 'item-categories',
+    table: 'item_categories', noun: 'Item category', plural: 'item categories', file: 'item-categories', formCols: 3,
     hint: 'Categories carry the GL accounts and tax codes that items inherit. Posting looks up revenue, cost, inventory and variance accounts here, so a correctly set up category automates the accounting for every item in it.',
     defaults: { item_type: 'stock', is_sellable: true, is_purchasable: true, is_active: true },
     duplicateMessage: 'That category code already exists.',
@@ -74,14 +74,14 @@ if (ctx) {
       return [
         { name: 'code', label: 'Code', required: true },
         { name: 'name', label: 'Name', required: true },
-        { name: 'item_type', label: 'Type', type: 'select', required: true, full: true,
+        { name: 'item_type', label: 'Type', type: 'select', required: true,
           options: TYPES.map(([value, label]) => ({ value, label })), hint: 'Cannot change once the category has items.' },
         { name: 'is_sellable', label: 'Items in this category are sold', type: 'checkbox' },
         { name: 'is_purchasable', label: 'Items in this category are bought', type: 'checkbox' },
+        { name: 'is_active', label: 'Active', type: 'checkbox' },
         { name: 'sales_tax_code_id', label: 'Default sales tax code', type: 'select', options: tax('sales') },
         { name: 'purchase_tax_code_id', label: 'Default purchases tax code', type: 'select', options: tax('purchases') },
-        ...ACC.map((a) => ({ name: a.key, label: a.label, type: 'select', options: pick(a.kind), full: true, hint: a.hint })),
-        { name: 'is_active', label: 'Active', type: 'checkbox' },
+        ...ACC.map((a) => ({ name: a.key, label: a.label, type: 'select', options: pick(a.kind), hint: a.hint })),
       ];
     },
 

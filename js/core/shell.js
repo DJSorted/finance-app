@@ -48,6 +48,7 @@ const NAV = [
   { section: 'Inventory', items: [
     { href: '/pages/items.html', label: 'Items' },
     { href: '/pages/item-categories.html', label: 'Item Categories' },
+    { href: '/pages/item-groups.html', label: 'Item Groups' },
     { href: '/pages/units.html', label: 'Units of Measure' },
     { href: '/pages/warehouses.html', label: 'Warehouses' },
     { href: '/pages/stock-adjustments.html', label: 'Stock Adjustments' },

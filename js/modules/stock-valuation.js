@@ -19,6 +19,7 @@ const TYPE_LABEL = {
 let base = '';
 let rows = [];
 let warehouses = [];
+let groupOf = new Map();
 
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -42,6 +43,29 @@ const asOfEl = el('input');
 asOfEl.type = 'date';
 asOfEl.style.width = 'auto';
 const whSel = el('select', 'compact');
+const groupSel = el('select', 'compact');
+groupSel.style.maxWidth = '220px';
+
+async function loadGroups() {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase.from('items').select('id, item_group_id').eq('company_id', ctx.companyId).not('item_group_id', 'is', null)
+      .order('id').range(from, from + 999);
+    if (error) throw error;
+    out.push(...data);
+    if (data.length < 1000) break;
+  }
+  const { data: groups, error } = await supabase.from('item_groups').select('id, code, name').eq('company_id', ctx.companyId).order('code');
+  if (error) throw error;
+  groupOf = new Map(out.map((x) => [x.id, groups.find((g) => g.id === x.item_group_id)]).filter(([, g]) => g));
+  const keep = groupSel.value;
+  groupSel.replaceChildren();
+  const all = el('option', '', 'All groups');
+  all.value = '';
+  groupSel.append(all);
+  groups.forEach((g) => { const o = el('option', '', `${g.code} - ${g.name}`); o.value = g.id; groupSel.append(o); });
+  groupSel.value = groups.some((g) => g.id === keep) ? keep : '';
+}
 
 async function init() {
   document.getElementById('company-title').textContent = ctx.company.name;
@@ -89,20 +113,24 @@ function renderRecon(r) {
   </div>`;
 }
 
-function shown() { return rows.filter((r) => !whSel.value || r.warehouse_id === whSel.value); }
+const groupFor = (r) => (groupOf.get(r.item_id) || {}).name || '';
+function shown() {
+  return rows.filter((r) => (!whSel.value || r.warehouse_id === whSel.value)
+    && (!groupSel.value || (groupOf.get(r.item_id) || {}).id === groupSel.value));
+}
 
 function render() {
   const list = shown();
   if (!list.length) { panel.innerHTML = '<p class="muted">No stock on hand at this date.</p>'; return; }
   const total = list.reduce((s, r) => s + Number(r.value), 0);
   const body = list.map((r) => `<tr class="clickable" data-item="${r.item_id}" data-wh="${r.warehouse_id}">
-    <td>${esc(r.item_code)}</td><td>${esc(r.item_name)}</td><td>${esc(r.warehouse_code)}</td><td>${esc(r.uom)}</td>
+    <td>${esc(r.item_code)}</td><td>${esc(r.item_name)}</td><td>${esc(groupFor(r))}</td><td>${esc(r.warehouse_code)}</td><td>${esc(r.uom)}</td>
     <td class="num">${qtyFmt(r.qty)}</td><td class="num">${Number(r.qty) > 0 ? costFmt(r.avg_cost) : ''}</td>
     <td class="num">${money(r.value)}</td></tr>`).join('');
   panel.innerHTML = `<div class="table-wrap"><table class="grid"><thead><tr>
-    <th>Item</th><th>Name</th><th>Warehouse</th><th>Unit</th><th style="text-align:right">Quantity</th>
+    <th>Item</th><th>Name</th><th>Group</th><th>Warehouse</th><th>Unit</th><th style="text-align:right">Quantity</th>
     <th style="text-align:right">Average cost</th><th style="text-align:right">Value (${esc(base)})</th></tr></thead>
-    <tbody>${body}<tr class="row-root"><td colspan="6">Total</td><td class="num">${money(total)}</td></tr></tbody></table></div>`;
+    <tbody>${body}<tr class="row-root"><td colspan="7">Total</td><td class="num">${money(total)}</td></tr></tbody></table></div>`;
 }
 
 panel.addEventListener('click', async (e) => {
@@ -134,11 +162,12 @@ async function doExport() {
     await exportSheets(`stock-valuation-${asOfEl.value}.xlsx`, [{
       name: 'Valuation',
       rows: list.map((r) => ({
-        code: r.item_code, name: r.item_name, warehouse: r.warehouse_code, uom: r.uom,
+        code: r.item_code, name: r.item_name, group: groupFor(r), warehouse: r.warehouse_code, uom: r.uom,
         qty: Number(r.qty), cost: Number(r.avg_cost), value: Number(r.value),
       })),
       columns: [
         { key: 'code', header: 'Item', width: 14 }, { key: 'name', header: 'Name', width: 34 },
+        { key: 'group', header: 'Group', width: 16 },
         { key: 'warehouse', header: 'Warehouse', width: 12 }, { key: 'uom', header: 'Unit', width: 8 },
         { key: 'qty', header: 'Quantity', width: 14 }, { key: 'cost', header: 'Average cost', width: 14 },
         { key: 'value', header: `Value (${base})`, width: 16 },

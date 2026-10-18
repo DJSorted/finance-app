@@ -23,6 +23,7 @@ const MODES = [['nearest', 'Nearest'], ['up', 'Up'], ['down', 'Down']];
 
 let items = [];
 let categories = [];
+let groups = [];
 let rules = [];
 let history = [];
 let base = '';
@@ -51,7 +52,8 @@ function field(text, input) { const w = el('div', 'field'); w.append(el('label',
 
 const catSel = el('select'); catSel.style.maxWidth = '220px';
 const typeSel = el('select'); typeSel.style.width = 'auto';
-const searchEl = el('input'); searchEl.placeholder = 'Search code or name'; searchEl.style.maxWidth = '220px';
+const groupSel = el('select'); groupSel.style.maxWidth = '200px';
+const searchEl = el('input'); searchEl.placeholder = 'Search code, name or group'; searchEl.style.maxWidth = '220px';
 const activeChk = el('input'); activeChk.type = 'checkbox'; activeChk.checked = true; activeChk.style.width = 'auto';
 const methodSel = el('select');
 const valueEl = el('input'); valueEl.type = 'number'; valueEl.step = 'any';
@@ -70,7 +72,7 @@ async function loadItems() {
   const out = [];
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await supabase.from('items')
-      .select('id, code, name, category_id, item_type, sales_price, sales_price_currency, is_active')
+      .select('id, code, name, category_id, item_group_id, item_groups(name), item_type, sales_price, sales_price_currency, is_active')
       .eq('company_id', ctx.companyId).order('code').range(from, from + PAGE - 1);
     if (error) throw error;
     out.push(...data);
@@ -92,7 +94,7 @@ async function rpcAll(fn, params) {
 
 async function loadAll() {
   const cid = ctx.companyId;
-  const [it, c, cur, r, h] = await Promise.all([
+  const [it, c, cur, r, h, g] = await Promise.all([
     loadItems(),
     supabase.from('item_categories').select('id, code, name').eq('company_id', cid).order('code'),
     supabase.from('company_currencies').select('code').eq('company_id', cid).eq('is_base', true).maybeSingle(),
@@ -100,10 +102,12 @@ async function loadAll() {
     supabase.from('price_history')
       .select('changed_at, old_price, new_price, currency, cost_used, rule_method, rule_value, rounding, rounding_mode, note, items(code, name)')
       .eq('company_id', cid).order('changed_at', { ascending: false }).limit(300),
+    supabase.from('item_groups').select('id, code, name').eq('company_id', cid).order('code'),
   ]);
-  for (const x of [c, cur, r, h]) if (x.error) throw x.error;
+  for (const x of [c, cur, r, h, g]) if (x.error) throw x.error;
   items = it;
   categories = c.data;
+  groups = g.data;
   base = cur.data ? cur.data.code : '';
   rules = r.data;
   history = h.data;
@@ -122,12 +126,15 @@ function stale() {
   if (preview) { preview = null; renderList(); }
 }
 
+const groupName = (i) => (i.item_groups ? i.item_groups.name : '');
+
 function visible() {
   const q = searchEl.value.trim().toLowerCase();
   return items.filter((i) => (!catSel.value || i.category_id === catSel.value)
     && (!typeSel.value || i.item_type === typeSel.value)
+    && (!groupSel.value || i.item_group_id === groupSel.value)
     && (!activeChk.checked || i.is_active)
-    && (!q || i.code.toLowerCase().includes(q) || i.name.toLowerCase().includes(q)));
+    && (!q || [i.code, i.name, groupName(i)].some((x) => String(x || '').toLowerCase().includes(q))));
 }
 
 function updateCount(shown) {
@@ -151,7 +158,7 @@ function renderList() {
       } else extra = '<td></td><td></td><td></td><td></td>';
     }
     return `<tr><td><input type="checkbox" data-id="${i.id}" ${selected.has(i.id) ? 'checked' : ''} style="width:auto"></td>
-      <td>${esc(i.code)}</td><td>${esc(i.name)}</td><td>${esc(catName(i.category_id))}</td><td>${esc(TYPE_LABEL[i.item_type] || i.item_type)}</td>
+      <td>${esc(i.code)}</td><td>${esc(i.name)}</td><td>${esc(catName(i.category_id))}</td><td>${esc(groupName(i))}</td><td>${esc(TYPE_LABEL[i.item_type] || i.item_type)}</td>
       <td class="num">${i.sales_price === null ? '' : `${money(i.sales_price)} ${esc(cur)}`}</td>${extra}</tr>`;
   }).join('');
   const th = (t, right) => `<th${right ? ' style="text-align:right"' : ''}>${t}</th>`;
@@ -163,9 +170,9 @@ function renderList() {
   const ids = new Set(rows.map((r) => r.id));
   const hidden = [...selected].filter((id) => !ids.has(id)).length;
   listEl.innerHTML = `${summary}${hidden ? `<p class="muted">${hidden} selected item(s) are hidden by the filters and are still included.</p>` : ''}
-    <div class="table-wrap"><table class="grid"><thead><tr><th><input type="checkbox" data-all style="width:auto"></th>${th('Code')}${th('Name')}${th('Category')}${th('Type')}${th('Current price', 1)}
+    <div class="table-wrap"><table class="grid"><thead><tr><th><input type="checkbox" data-all style="width:auto"></th>${th('Code')}${th('Name')}${th('Category')}${th('Group')}${th('Type')}${th('Current price', 1)}
     ${preview ? `${th(`Cost (${esc(base)} or price currency)`, 1)}${th('New price', 1)}${th('Change', 1)}${th('Note')}` : ''}</tr></thead>
-    <tbody>${body || '<tr><td colspan="10" class="muted">No items match the filters.</td></tr>'}</tbody></table></div>`;
+    <tbody>${body || '<tr><td colspan="11" class="muted">No items match the filters.</td></tr>'}</tbody></table></div>`;
   applyBtn.disabled = !preview || !ctx.canEdit || !preview.some((r) => !r.r_reason);
   updateCount(rows.length);
 }
@@ -290,6 +297,8 @@ async function init() {
 
   option(catSel, '', 'All categories');
   categories.forEach((c) => option(catSel, c.id, `${c.code} - ${c.name}`));
+  option(groupSel, '', 'All groups');
+  groups.forEach((g) => option(groupSel, g.id, `${g.code} - ${g.name}`));
   option(typeSel, '', 'All types');
   Object.entries(TYPE_LABEL).forEach(([k, t]) => option(typeSel, k, t));
   Object.entries(METHODS).forEach(([k, m]) => option(methodSel, k, m.label));
@@ -301,9 +310,9 @@ async function init() {
   lbl.style.cssText = 'display:flex;align-items:center;gap:.4rem;cursor:pointer';
   lbl.append(activeChk, document.createTextNode('Active only'));
   let t;
-  [catSel, typeSel, activeChk].forEach((c) => c.addEventListener('change', () => { preview = null; renderList(); }));
+  [catSel, groupSel, typeSel, activeChk].forEach((c) => c.addEventListener('change', () => { preview = null; renderList(); }));
   searchEl.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { preview = null; renderList(); }, 250); });
-  toolbar.append(catSel, typeSel, searchEl, lbl, countEl, el('span', 'spacer'),
+  toolbar.append(catSel, groupSel, typeSel, searchEl, lbl, countEl, el('span', 'spacer'),
     btn('Clear selection', '', () => { selected.clear(); preview = null; renderList(); }),
     btn('Export history', '', exportHistory));
 

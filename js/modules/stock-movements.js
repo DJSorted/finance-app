@@ -49,18 +49,21 @@ const toEl = el('input'); toEl.type = 'date'; toEl.style.width = 'auto';
 const itemSel = el('select', 'compact');
 const whSel = el('select', 'compact');
 const typeSel = el('select', 'compact');
+const groupSel = el('select', 'compact');
 itemSel.style.maxWidth = '260px';
+groupSel.style.maxWidth = '220px';
 
 async function init() {
   document.getElementById('company-title').textContent = ctx.company.name;
   const cid = ctx.companyId;
-  const [it, w, c, fy] = await Promise.all([
-    supabase.from('items').select('id, code, name').eq('company_id', cid).in('item_type', ['stock', 'manufactured']).order('code'),
+  const [it, w, c, fy, g] = await Promise.all([
+    supabase.from('items').select('id, code, name, item_group_id, item_groups(name)').eq('company_id', cid).in('item_type', ['stock', 'manufactured']).order('code'),
     supabase.from('warehouses').select('id, code, name').eq('company_id', cid).order('code'),
     supabase.from('company_currencies').select('code').eq('company_id', cid).eq('is_base', true).maybeSingle(),
     supabase.from('fiscal_years').select('start_date, end_date').eq('company_id', cid).order('start_date'),
+    supabase.from('item_groups').select('id, code, name').eq('company_id', cid).order('code'),
   ]);
-  for (const r of [it, w, fy]) if (r.error) { ui.errorFrom(r.error, 'Could not load the report setup.'); return; }
+  for (const r of [it, w, fy, g]) if (r.error) { ui.errorFrom(r.error, 'Could not load the report setup.'); return; }
   items = it.data;
   warehouses = w.data;
   base = c.data ? c.data.code : '';
@@ -73,11 +76,14 @@ async function init() {
   items.forEach((x) => option(itemSel, x.id, `${x.code} - ${x.name}`));
   option(whSel, '', 'All warehouses');
   warehouses.forEach((x) => option(whSel, x.id, `${x.code} - ${x.name}`));
+  option(groupSel, '', 'All groups');
+  g.data.forEach((x) => option(groupSel, x.id, `${x.code} - ${x.name}`));
+  groupSel.addEventListener('change', render);
   option(typeSel, '', 'All types');
   Object.entries(TYPE_LABEL).forEach(([k, v]) => option(typeSel, k, v));
   typeSel.addEventListener('change', render);
 
-  toolbar.append(el('span', 'muted', 'From'), fromEl, el('span', 'muted', 'To'), toEl, itemSel, whSel, typeSel,
+  toolbar.append(el('span', 'muted', 'From'), fromEl, el('span', 'muted', 'To'), toEl, itemSel, whSel, groupSel, typeSel,
     btn('Run', 'btn-primary', run), el('span', 'spacer'), btn('Export to Excel', '', doExport));
   hint.textContent = `Every stock movement in ${base}. Pick one item and one warehouse to see the opening and running balance. Quantities are signed: positive in, negative out.`;
   await run();
@@ -97,7 +103,12 @@ async function run() {
   render();
 }
 
-function shown() { return rows.filter((r) => !typeSel.value || r.movement_type === typeSel.value); }
+let byCode = null;
+const itemFor = (r) => { byCode = byCode || new Map(items.map((x) => [x.code, x])); return byCode.get(r.item_code) || {}; };
+const groupFor = (r) => (itemFor(r).item_groups || {}).name || '';
+function shown() {
+  return rows.filter((r) => (!typeSel.value || r.movement_type === typeSel.value) && (!groupSel.value || itemFor(r).item_group_id === groupSel.value));
+}
 
 function render() {
   const list = shown();
@@ -137,11 +148,11 @@ async function doExport() {
       name: 'Movements',
       rows: list.map((r) => ({
         date: r.movement_date, type: TYPE_LABEL[r.movement_type] || r.movement_type, doc: r.source_no || '',
-        item: r.item_code, name: r.item_name, wh: r.warehouse_code, qty: Number(r.qty), cost: Number(r.unit_cost), value: Number(r.value),
+        item: r.item_code, name: r.item_name, group: groupFor(r), wh: r.warehouse_code, qty: Number(r.qty), cost: Number(r.unit_cost), value: Number(r.value),
       })),
       columns: [
         { key: 'date', header: 'Date', width: 12 }, { key: 'type', header: 'Type', width: 18 }, { key: 'doc', header: 'Document', width: 14 },
-        { key: 'item', header: 'Item', width: 14 }, { key: 'name', header: 'Name', width: 30 }, { key: 'wh', header: 'Warehouse', width: 12 },
+        { key: 'item', header: 'Item', width: 14 }, { key: 'name', header: 'Name', width: 30 }, { key: 'group', header: 'Group', width: 16 }, { key: 'wh', header: 'Warehouse', width: 12 },
         { key: 'qty', header: 'Quantity', width: 12 }, { key: 'cost', header: 'Unit cost', width: 14 },
         { key: 'value', header: `Value (${base})`, width: 16 },
       ],

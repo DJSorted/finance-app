@@ -31,7 +31,8 @@ function link(text, href, cls = '') {
 //        rowLinks: [{ text, href(row) }]                extra buttons on each row (shown to people who can edit)
 //        toolbarButtons: [{ text, onClick({ rows, lk, refresh }), editOnly }]   extra toolbar buttons that run code
 //        rowButtons: [{ text, onClick(row, { rows, lk, refresh }), show(row), editOnly }]   extra row buttons that run code
-//        attach: false }                                turns off the Attach button (on by default for tables that can hold attachments)
+//        attach: false,                                 turns off the Attach button (on by default for tables that can hold attachments)
+//        formCols: 3 }                                  a wider three-column add/edit dialog for long forms
 // Every column needs header and text(row); html(row) is optional and must escape its own output.
 export async function setupPage(ctx, cfg) {
   const toolbar = document.getElementById('toolbar');
@@ -125,6 +126,7 @@ export async function setupPage(ctx, cfg) {
       title: `${isEdit ? 'Edit' : 'Add'} ${cfg.noun.toLowerCase()}`,
       fields: cfg.fields(lk, row),
       values,
+      cols: cfg.formCols,
       onSubmit: async (v) => {
         if (cfg.validate) cfg.validate(v, row, rows);
         const payload = cfg.toPayload ? cfg.toPayload(v, row) : v;
