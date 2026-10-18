@@ -303,7 +303,56 @@ function buildShell(session, memberships, active) {
     group.append(head, items);
     nav.append(group);
   });
-  sidebar.append(nav);
+
+  // Filters the menu as you type; matching groups open, Enter goes to the first match
+  const mbox = h('input', 'nav-find');
+  mbox.type = 'search';
+  mbox.placeholder = 'Find a menu item ( m )';
+  mbox.setAttribute('aria-label', 'Find a menu item');
+  const filterNav = () => {
+    const terms = mbox.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    nav.classList.toggle('filtering', terms.length > 0);
+    nav.querySelectorAll('.nav-group').forEach((g) => {
+      const section = g.querySelector('.nav-section').textContent.replace('▾', '').toLowerCase();
+      let any = false;
+      g.querySelectorAll('.nav-items a').forEach((a) => {
+        const hay = `${a.textContent.toLowerCase()} ${section}`;
+        const hit = terms.every((t) => hay.includes(t));
+        a.classList.toggle('nav-hidden', terms.length > 0 && !hit);
+        a.classList.remove('nav-first');
+        if (hit) any = true;
+      });
+      g.classList.toggle('nav-hidden', terms.length > 0 && !any);
+    });
+    const first = terms.length ? nav.querySelector('.nav-group:not(.nav-hidden) .nav-items a:not(.nav-hidden)') : null;
+    if (first) first.classList.add('nav-first');
+  };
+  mbox.addEventListener('input', filterNav);
+  mbox.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const first = nav.querySelector('a.nav-first');
+      if (first) location.href = first.href;
+    } else if (e.key === 'Escape') {
+      e.stopPropagation();
+      mbox.value = '';
+      filterNav();
+      mbox.blur();
+    } else if (e.key === 'ArrowDown') {
+      const first = nav.querySelector('a.nav-first');
+      if (first) { e.preventDefault(); first.focus(); }
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'm' && !e.ctrlKey && !e.metaKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || '') && !(document.activeElement || {}).isContentEditable) {
+      e.preventDefault();
+      document.body.classList.add('nav-open');
+      mbox.focus();
+    }
+  });
+  const mwrap = h('div', 'nav-find-wrap');
+  mwrap.append(mbox);
+  sidebar.append(mwrap, nav);
 
   const meta = session.user.user_metadata || {};
   const who = h('button', 'btn btn-ghost', meta.full_name || session.user.email);

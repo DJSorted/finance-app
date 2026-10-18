@@ -199,6 +199,14 @@ body:not(.ready) > main { visibility: hidden; }
 .nav-group.collapsed .nav-items { display: none; }
 .nav-items { padding-left: .5rem; }
 
+/* Menu filter */
+.nav-find-wrap { padding: .6rem .75rem 0; }
+.nav-find { width: 100%; }
+.sidebar nav.filtering .nav-group.collapsed .nav-items { display: block; }
+.sidebar nav.filtering .nav-caret { visibility: hidden; }
+.sidebar nav .nav-hidden { display: none !important; }
+.sidebar nav a.nav-first { background: var(--surface-2); color: var(--text); }
+
 /* Report layouts */
 .split { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr); align-items: start; }
 @media (min-width: 1250px) { .split { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
