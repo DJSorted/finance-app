@@ -85,7 +85,8 @@ function docHtml(title, body, s = DEFAULT_SETTINGS) {
       table.tot td{padding:4px 8px}
       table.tot tr.grand td{font-weight:bold;font-size:13px;border-top:2px solid #111}
       .note{margin-top:12px}
-      .bank{margin-top:14px;border:1px solid #ccc;border-radius:4px;padding:8px 10px}
+      .bank{margin-top:14px;border:1px solid #ccc;border-radius:4px;padding:8px 10px;width:48%;box-sizing:border-box;break-inside:avoid}
+      .paid{display:inline-block;margin-top:10px;padding:4px 10px;border:2px solid #1a7f37;color:#1a7f37;border-radius:4px;font-weight:bold;letter-spacing:.05em}
       .foot{margin-top:26px;border-top:1px solid #ccc;padding-top:8px;color:#444;font-size:11px}
       .sign{display:flex;gap:40px;margin-top:48px}.sign div{flex:1;border-top:1px solid #000;padding-top:4px}
       ${templateCss(s)}
@@ -186,7 +187,8 @@ function footer(company, s = DEFAULT_SETTINGS) {
 
 /* ---------- invoice and credit note ---------- */
 
-function salesBody({ company, base, d, lines, dec, customer, termsName, s, bank, extras = [], projectText = '' }) {
+// outstanding: amount still owed on a posted invoice (null when unknown, e.g. a draft); paid = gross - outstanding.
+function salesBody({ company, base, d, lines, dec, customer, termsName, s, bank, extras = [], projectText = '', outstanding = null }) {
   const isInv = d.doc_type === 'invoice';
   const hasTax = Number(d.tax_total) > 0;
   const title = `${hasTax ? 'Tax ' : ''}${isInv ? 'invoice' : 'credit note'}`.replace(/^./, (c) => c.toUpperCase());
@@ -214,6 +216,21 @@ function salesBody({ company, base, d, lines, dec, customer, termsName, s, bank,
     ? `<div class="note muted">Amounts are in ${esc(d.currency_code)}. Exchange rate: 1 ${esc(d.currency_code)} = ${Number(d.fx_rate).toFixed(4)} ${esc(base)}.${hasTax ? ` Tax in ${esc(base)}: ${money(Number(d.tax_total) * Number(d.fx_rate), 2)}.` : ''}</div>`
     : '';
 
+  const cur = esc(d.currency_code);
+  const gross = Number(d.gross_total);
+  const tracked = isInv && outstanding !== null;
+  const owed = tracked ? Math.max(0, Math.min(gross, outstanding)) : gross;
+  const paidAmt = tracked ? gross - owed : 0;
+  const isPaid = tracked && owed < 0.005;
+  let payRows;
+  if (!isInv) payRows = `<tr class="grand"><td>Total credited (${cur})</td><td class="n">${money(gross, dec)}</td></tr>`;
+  else if (!tracked || paidAmt < 0.005) payRows = `<tr class="grand"><td>Total due (${cur})</td><td class="n">${money(gross, dec)}</td></tr>`;
+  else {
+    payRows = `<tr class="grand"><td>Total (${cur})</td><td class="n">${money(gross, dec)}</td></tr>
+      <tr><td class="muted">Paid and credited</td><td class="n">(${money(paidAmt, dec)})</td></tr>
+      <tr class="grand"><td>Balance due (${cur})</td><td class="n">${money(owed, dec)}</td></tr>`;
+  }
+
   const body = `${header(company, title, [
     [`${isInv ? 'Invoice' : 'Credit note'} no`, d.doc_no], ['Date', d.doc_date], isInv ? ['Due date', d.due_date] : ['', ''],
     ['Reference', d.reference], ['Payment terms', termsName], ['Project', projectText], ...extras,
@@ -225,9 +242,10 @@ function salesBody({ company, base, d, lines, dec, customer, termsName, s, bank,
         ${hasTax ? '<th class="n">Tax</th>' : ''}<th class="n">Amount</th></tr></thead><tbody>${rows}</tbody></table>
       <table class="tot"><tr><td class="muted">Subtotal</td><td class="n">${money(d.net_total, dec)}</td></tr>${taxRows}
         ${hasTax ? `<tr><td class="muted">Total tax</td><td class="n">${money(d.tax_total, dec)}</td></tr>` : ''}
-        <tr class="grand"><td>${isInv ? 'Total due' : 'Total credited'} (${esc(d.currency_code)})</td><td class="n">${money(d.gross_total, dec)}</td></tr></table>
+        ${payRows}</table>
+      ${isPaid ? '<div style="text-align:right"><span class="paid">PAID</span></div>' : ''}
       ${rateNote}${d.notes ? `<div class="note"><strong>Notes</strong><br>${nl(d.notes)}</div>` : ''}
-      ${closingHtml(s)}${isInv ? bankHtml(bank) : ''}${footer(company, s)}`;
+      ${closingHtml(s)}${isInv && !isPaid ? bankHtml(bank) : ''}${footer(company, s)}`;
   return { title, body };
 }
 
@@ -272,9 +290,20 @@ export async function printSalesDocument(ctx, d) {
       const p = await supabase.from('projects').select('code, name').in('id', projectIds);
       if (!p.error) projectText = p.data.map((x) => `${x.code} - ${x.name}`).join(', ');
     }
+    // Posted invoices: what is still owed today, after receipts and credit notes applied to it.
+    let outstanding = null;
+    if (d.doc_type === 'invoice' && d.status === 'posted') {
+      const n = new Date();
+      const today = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+      const oi = await supabase.rpc('sales_open_items', { p_company: ctx.companyId, p_customer: d.customer_id, p_as_of: today });
+      if (!oi.error) {
+        const row = (oi.data || []).find((i) => i.doc_id === d.id && i.doc_kind === 'invoice');
+        outstanding = row ? Number(row.outstanding) : 0;
+      }
+    }
     const { title, body } = salesBody({
       company: co.row, base: co.base, d, lines: l.data, dec, customer: cust.data || {}, termsName: terms.data ? terms.data.name : '',
-      s, bank: bankFor(cfg.banks, d.currency_code), extras: ask.extras, projectText,
+      s, bank: bankFor(cfg.banks, d.currency_code), extras: ask.extras, projectText, outstanding,
     });
     await printHtml(`${title} ${d.doc_no}`, body, s);
   } catch (e) { ui.errorFrom(e, 'Could not prepare the document for printing.'); }
