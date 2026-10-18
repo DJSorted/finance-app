@@ -63,7 +63,7 @@ export function dialog({ title, message, node, buttons, dismissValue = null, wid
 }
 
 // Standard form dialog used by every setup screen.
-// fields: [{ name, label, type: text|number|select|checkbox|textarea, required, options:[{value,label}], hint, full }]
+// fields: [{ name, label, type: text|number|select|checkbox|textarea, required, options:[{value,label}], hint, full, placeholder, noEnter }]
 // onSubmit(values) may throw; the dialog then stays open and shows the error.
 // Resolves true when saved, false when cancelled.
 function formDialog({ title, fields, values = {}, submitText = 'Save', onSubmit }) {
@@ -108,6 +108,8 @@ function formDialog({ title, fields, values = {}, submitText = 'Save', onSubmit 
       }
       input.id = id;
       if (f.disabled) input.disabled = true;
+      // A barcode scanner presses Enter after the code; noEnter stops that from saving the form
+      if (f.noEnter) input.addEventListener('keydown', (e) => { if (e.key === 'Enter') e.preventDefault(); });
       const label = el('label', '', f.label + (f.required ? ' *' : ''));
       label.htmlFor = id;
       if (f.type === 'checkbox') wrap.append(input, label); else wrap.append(label, input);

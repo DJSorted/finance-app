@@ -29,6 +29,8 @@ function link(text, href, cls = '') {
 //        beforeDelete(row, rows), duplicateMessage,
 //        toolbarLinks: [{ text, href, editOnly }]       extra buttons in the toolbar that open another page
 //        rowLinks: [{ text, href(row) }]                extra buttons on each row (shown to people who can edit)
+//        toolbarButtons: [{ text, onClick({ rows, lk, refresh }), editOnly }]   extra toolbar buttons that run code
+//        rowButtons: [{ text, onClick(row, { rows, lk, refresh }), show(row), editOnly }]   extra row buttons that run code
 //        attach: false }                                turns off the Attach button (on by default for tables that can hold attachments)
 // Every column needs header and text(row); html(row) is optional and must escape its own output.
 export async function setupPage(ctx, cfg) {
@@ -67,6 +69,9 @@ export async function setupPage(ctx, cfg) {
     (cfg.toolbarLinks || [])
       .filter((l) => !l.editOnly || ctx.canEdit)
       .forEach((l) => toolbar.append(link(l.text, l.href)));
+    (cfg.toolbarButtons || [])
+      .filter((b) => !b.editOnly || ctx.canEdit)
+      .forEach((b) => toolbar.append(btn(b.text, '', () => b.onClick({ rows, lk, refresh }))));
     if (cfg.search) {
       const box = document.createElement('input');
       box.type = 'search';
@@ -100,7 +105,9 @@ export async function setupPage(ctx, cfg) {
     const body = list.map((r) => {
       const tds = cols.map((c) => `<td${c.num ? ' class="num"' : ''}>${c.html ? c.html(r) : esc(c.text(r))}</td>`).join('');
       const attachBtn = canAttach ? '<button class="btn btn-sm" data-act="attach">Attach</button>' : '';
-      const extra = ctx.canEdit ? (cfg.rowLinks || []).map((l) => `<a class="btn btn-sm" href="${esc(l.href(r))}">${esc(l.text)}</a>`).join('') : '';
+      const extra = (ctx.canEdit ? (cfg.rowLinks || []).map((l) => `<a class="btn btn-sm" href="${esc(l.href(r))}">${esc(l.text)}</a>`).join('') : '')
+        + (cfg.rowButtons || []).map((b, i) => ((!b.editOnly || ctx.canEdit) && (!b.show || b.show(r))
+          ? `<button class="btn btn-sm" data-act="rb${i}">${esc(b.text)}</button>` : '')).join('');
       const editBtns = ctx.canEdit
         ? `<button class="btn btn-sm" data-act="edit">Edit</button>${canDelete ? '<button class="btn btn-sm" data-act="del">Delete</button>' : ''}`
         : '';
@@ -166,6 +173,12 @@ export async function setupPage(ctx, cfg) {
     if (t.dataset.act === 'attach' && canAttach) {
       const name = [row.code, row.name].filter(Boolean).join(' - ');
       await openAttachmentsDialog(ctx, { table: cfg.table, recordId: row.id, title: `Attachments: ${cfg.noun}${name ? ` ${name}` : ''}` });
+      return;
+    }
+    const rb = /^rb(\d+)$/.exec(t.dataset.act);
+    if (rb) {
+      const b = (cfg.rowButtons || [])[Number(rb[1])];
+      if (b && (!b.editOnly || ctx.canEdit)) await b.onClick(row, { rows, lk, refresh });
       return;
     }
     if (!ctx.canEdit) return;

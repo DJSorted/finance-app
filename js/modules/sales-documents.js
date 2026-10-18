@@ -4,6 +4,7 @@ import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
 import { printSalesDocument } from '../core/print-docs.js';
 import { openAttachmentsDialog } from '../core/attachments.js';
+import { findByScan, openScanner, showItemPreview } from '../core/barcode.js';
 
 const ctx = await startPage();
 
@@ -76,7 +77,7 @@ async function load() {
     supabase.from('company_currencies').select('code, is_base, currencies(decimals)').eq('company_id', cid).order('code'),
     supabase.from('payment_terms').select('id, code, name, basis, days').eq('company_id', cid).eq('is_active', true).order('code'),
     supabase.from('tax_codes').select('id, code, name, rate, applies_to').eq('company_id', cid).eq('is_active', true).order('code'),
-    supabase.from('items').select('id, code, name, item_type, sales_price, sales_price_currency, sales_tax_code_id, item_categories(is_sellable, sales_tax_code_id)')
+    supabase.from('items').select('id, code, name, description, barcode, link_url, item_type, sales_price, sales_price_currency, sales_tax_code_id, item_categories(is_sellable, sales_tax_code_id)')
       .eq('company_id', cid).eq('is_active', true).order('code'),
     supabase.from('gl_accounts').select('id, code, name, account_groups(class_type)')
       .eq('company_id', cid).eq('is_posting', true).eq('is_active', true).is('control_type', null).order('code'),
@@ -348,7 +349,19 @@ async function openEditor(existing) {
     const td = (x) => { const c = el('td'); c.append(x); return c; };
     const dtd = el('td');
     dtd.append(del);
-    tr.append(td(itemSel), td(desc), onh, td(qty), td(price), td(taxSel), td(accSel), netCell, dtd);
+    // Preview button beside the item, shown when the item has a picture or web link
+    const pvBtn = el('button', 'btn btn-sm btn-ghost', '🔗');
+    pvBtn.type = 'button';
+    pvBtn.title = 'Preview item';
+    pvBtn.addEventListener('click', () => { const it = itemMap.get(itemSel.value); if (it) showItemPreview(it); });
+    const syncPv = () => { const it = itemMap.get(itemSel.value); pvBtn.style.display = it && it.link_url ? '' : 'none'; };
+    syncPv();
+    const itemCell = el('td');
+    const itemWrap = el('div');
+    itemWrap.style.cssText = 'display:flex;gap:.25rem;align-items:center';
+    itemWrap.append(itemSel, pvBtn);
+    itemCell.append(itemWrap);
+    tr.append(itemCell, td(desc), onh, td(qty), td(price), td(taxSel), td(accSel), netCell, dtd);
     tbody.append(tr);
 
     const row = {
@@ -364,6 +377,7 @@ async function openEditor(existing) {
     if (!info) {
       itemSel.addEventListener('change', () => {
         syncAcc();
+        syncPv();
         const it = itemMap.get(itemSel.value);
         if (it) {
           if (!desc.value.trim()) desc.value = it.name;
@@ -479,6 +493,48 @@ async function openEditor(existing) {
   lineButtons.style.cssText = 'display:flex;gap:.5rem;flex-wrap:wrap';
   lineButtons.append(btn('Add line', '', () => { addRow({}); recalc(); }));
   if (TYPE === 'credit_note') lineButtons.append(btn('Credit from invoice', '', pickInvoiceLines));
+
+  // Scanning: adds 1 to the item's line, or fills a blank line, or adds a new line
+  function addScanned(raw) {
+    const it = findByScan(items, raw);
+    if (!it) {
+      const other = findByScan([...itemMap.values()], raw);
+      ui.warn(other && TYPE === 'credit_note' && other.item_type !== 'service'
+        ? `${other.code} is a stock item. Credit stock items from the invoice (Credit from invoice).`
+        : `No item on sale has the barcode or code ${raw}.`);
+      return '';
+    }
+    const same = rows.find((r) => !r.src && r.itemSel.value === it.id);
+    if (same) {
+      same.qty.value = String((Number(same.qty.value) || 0) + 1);
+    } else {
+      let row = rows.find((r) => !r.src && !r.itemSel.value && !r.accSel.value && !r.desc.value.trim() && r.price.value === '');
+      if (!row) { addRow({}); row = rows[rows.length - 1]; }
+      row.itemSel.value = it.id;
+      row.itemSel.dispatchEvent(new Event('change'));
+    }
+    recalc();
+    return it.name;
+  }
+  const scanIn = el('input');
+  scanIn.type = 'search';
+  scanIn.placeholder = 'Scan a barcode or type an item code';
+  scanIn.autocomplete = 'off';
+  scanIn.style.cssText = 'max-width:260px';
+  scanIn.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const raw = scanIn.value.trim();
+    if (!raw) return;
+    if (addScanned(raw)) scanIn.value = ''; else scanIn.select();
+  });
+  lineButtons.append(scanIn, btn('Camera', '', async () => {
+    await openScanner({
+      title: 'Scan items', continuous: true,
+      onCode: (code) => { const name = addScanned(code); return name ? `Added ${name}` : `Not found: ${code}`; },
+    });
+    scanIn.focus();
+  }));
   box.append(lineButtons, totals);
   syncRate();
   if (!existing) syncDue();
@@ -486,7 +542,12 @@ async function openEditor(existing) {
 
   /* ---- buttons ---- */
   const actions = el('div', 'modal-actions');
-  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  // Escape closes the editor only when no other pop-up (camera scanner, preview) is open on top of it
+  const onKey = (e) => {
+    if (e.key !== 'Escape') return;
+    const open = document.querySelectorAll('.modal-backdrop');
+    if (open[open.length - 1] === backdrop) close();
+  };
   const close = () => {
     document.removeEventListener('keydown', onKey);
     backdrop.remove();

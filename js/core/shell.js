@@ -21,6 +21,7 @@ const NAV = [
     { href: '/pages/income-trend.html', label: 'Income Trend' },
     { href: '/pages/balance-sheet.html', label: 'Balance Sheet' },
     { href: '/pages/cash-flow.html', label: 'Cash Flow' },
+    { href: '/pages/bank-transactions.html', label: 'Bank Transactions' },
   ] },
   { section: 'Setup', items: [
     { href: '/pages/company.html', label: 'Company Profile' },

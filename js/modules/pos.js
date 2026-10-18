@@ -2,6 +2,7 @@ import { supabase } from '../core/supabase.js';
 import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { makeModal } from '../core/attachments.js';
+import { findByScan, openScanner, isImageUrl, showItemPreview } from '../core/barcode.js';
 
 const ctx = await startPage();
 
@@ -74,7 +75,7 @@ async function loadSetup() {
     supabase.from('gl_accounts').select('id, code, name').eq('company_id', cid).eq('control_type', 'bank')
       .eq('is_posting', true).eq('is_active', true).order('code'),
     fetchAll(() => supabase.from('items')
-      .select('id, code, name, item_type, sales_price, sales_price_currency, sales_tax_code_id, item_categories(is_sellable, sales_tax_code_id)')
+      .select('id, code, name, description, barcode, link_url, item_type, sales_price, sales_price_currency, sales_tax_code_id, item_categories(is_sellable, sales_tax_code_id)')
       .eq('company_id', cid).eq('is_active', true).order('code').order('id')),
   ]);
   for (const x of [r, m, tx, cu, c, bk]) if (x.error) throw x.error;
@@ -197,7 +198,8 @@ async function renderOpenShift() {
 
 function renderSell() {
   panel.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:1rem">
-    <div><input id="pos-search" type="search" placeholder="Scan or type an item code or name" autocomplete="off" style="width:100%">
+    <div><div style="display:flex;gap:.5rem"><input id="pos-search" type="search" placeholder="Scan a barcode, or type an item code or name" autocomplete="off" style="flex:1;min-width:0">
+      <button class="btn" id="pos-cam" type="button" title="Scan barcodes with the camera">Camera</button></div>
       <div id="pos-results" style="margin-top:.5rem"></div></div>
     <div><div id="pos-cust" style="margin-bottom:.5rem"></div><div id="pos-cart"></div>
       <div id="pos-totals" class="totals-bar"></div>
@@ -220,14 +222,19 @@ function renderCust() {
   if (box) box.innerHTML = `<span class="muted">Customer:</span> <strong>${esc(c ? `${c.code} - ${c.name}` : '')}</strong>${walk ? '' : ' <span class="badge st-update">On account</span>'}`;
 }
 
+const matches = (i, q) => i.code.toLowerCase().includes(q) || i.name.toLowerCase().includes(q) || (i.barcode || '').toLowerCase().includes(q);
+
 function renderResults() {
   const q = term.trim().toLowerCase();
-  const list = (q ? items.filter((i) => i.code.toLowerCase().includes(q) || i.name.toLowerCase().includes(q)) : items).slice(0, q ? 40 : 24);
+  const list = (q ? items.filter((i) => matches(i, q)) : items).slice(0, q ? 40 : 24);
   const box = document.getElementById('pos-results');
   if (!box) return;
   if (!list.length) { box.innerHTML = '<p class="muted">No items match.</p>'; return; }
+  const thumb = (i) => (isImageUrl(i.link_url)
+    ? `<img src="${esc(i.link_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-preview="${i.id}" title="Preview" style="height:28px;width:28px;object-fit:cover;border-radius:4px;vertical-align:middle;margin-right:.4rem;cursor:zoom-in">`
+    : (i.link_url ? `<button class="btn btn-sm btn-ghost" type="button" data-preview="${i.id}" title="Preview">🔗</button> ` : ''));
   box.innerHTML = `<div class="table-wrap"><table class="grid"><thead><tr><th>Code</th><th>Item</th><th style="text-align:right">Price</th><th style="text-align:right">On hand</th></tr></thead><tbody>${
-    list.map((i) => `<tr class="clickable" data-add="${i.id}"><td>${esc(i.code)}</td><td>${esc(i.name)}</td>
+    list.map((i) => `<tr class="clickable" data-add="${i.id}"><td>${esc(i.code)}</td><td>${thumb(i)}${esc(i.name)}</td>
       <td class="num">${i.sales_price === null ? '' : money(i.sales_price)}</td>
       <td class="num">${i.item_type === 'service' ? '' : qtyFmt(balances.get(i.id) || 0)}</td></tr>`).join('')}</tbody></table></div>`;
 }
@@ -280,7 +287,31 @@ function addToCart(id) {
   renderCart();
 }
 
+// A scanned or typed code: adds the item and returns its name, or warns and returns ''
+function addScanned(raw) {
+  const it = findByScan(items, raw);
+  if (it) { addToCart(it.id); return it.name; }
+  ui.warn(`No item on sale has the barcode or code ${raw}.`);
+  return '';
+}
+
+async function scanWithCamera() {
+  await openScanner({
+    title: 'Scan items', continuous: true,
+    onCode: (code) => { const name = addScanned(code); return name ? `Added ${name}` : `Not found: ${code}`; },
+  });
+  const s = document.getElementById('pos-search');
+  if (s) s.focus();
+}
+
 panel.addEventListener('click', (e) => {
+  const pv = e.target.closest('[data-preview]');
+  if (pv) {
+    const it = itemMap.get(pv.dataset.preview);
+    if (it) showItemPreview(it, { price: it.sales_price === null ? '' : `${money(it.sales_price)} ${base} before tax` });
+    return;
+  }
+  if (e.target.closest('#pos-cam')) { scanWithCamera(); return; }
   const add = e.target.closest('[data-add]');
   if (add) { addToCart(add.dataset.add); const s = document.getElementById('pos-search'); if (s) s.focus(); return; }
   const rm = e.target.closest('[data-rm]');
@@ -294,12 +325,13 @@ panel.addEventListener('input', (e) => {
 panel.addEventListener('keydown', (e) => {
   if (e.target.id !== 'pos-search' || e.key !== 'Enter') return;
   e.preventDefault();
-  const q = e.target.value.trim().toLowerCase();
+  const raw = e.target.value.trim();
+  const q = raw.toLowerCase();
   if (!q) return;
-  const exact = items.find((i) => i.code.toLowerCase() === q);
-  const found = exact || (items.filter((i) => i.code.toLowerCase().includes(q) || i.name.toLowerCase().includes(q)).length === 1
-    ? items.find((i) => i.code.toLowerCase().includes(q) || i.name.toLowerCase().includes(q)) : null);
-  if (found) { addToCart(found.id); e.target.value = ''; term = ''; renderResults(); }
+  const partial = items.filter((i) => matches(i, q));
+  const found = findByScan(items, raw) || (partial.length === 1 ? partial[0] : null);
+  if (found) { addToCart(found.id); e.target.value = ''; term = ''; renderResults(); return; }
+  if (!partial.length) { ui.warn(`No item on sale has the barcode or code ${raw}.`); e.target.select(); }
 });
 
 async function pickCustomer() {
