@@ -7,7 +7,7 @@ import { watchTableFilters } from './table-filters.js';
 
 // Add new pages here and they appear in the sidebar on every screen.
 const NAV = [
-  { section: 'Overview', pinned: true, items: [{ href: '/', label: 'Home' }] },
+  { section: 'Overview', pinned: true, items: [{ href: '/', label: 'Home' }, { href: '/pages/search.html', label: 'Search' }] },
   { section: 'Accounting', items: [
     { href: '/pages/journals.html', label: 'Journals' },
      { href: '/pages/trial-balance.html', label: 'Trial Balance' },
@@ -24,7 +24,7 @@ const NAV = [
   ] },
   { section: 'Setup', items: [
     { href: '/pages/company.html', label: 'Company Profile' },
-    { href: '/pages/document-settings.html', label: 'Document Settings' },
+    { href: '/pages/document-settings.html', label: 'Document Settings', roles: ['owner', 'admin', 'accountant'] },
     { href: '/pages/new-company.html', label: 'New Company' },
     { href: '/pages/members.html', label: 'Users' },
     { href: '/pages/chart.html', label: 'Chart of Accounts' },
@@ -55,9 +55,6 @@ const NAV = [
     { href: '/pages/stock-valuation.html', label: 'Stock Valuation' },
     { href: '/pages/stock-movements.html', label: 'Stock Movements' },
     { href: '/pages/price-updates.html', label: 'Price Updates' },
-  ] },
-    { section: 'Power Search', items: [
-    { href: '/pages/search.html', label: 'Search' },
   ] },
   { section: 'Manufacturing', items: [
     { href: '/pages/boms.html', label: 'Bills of Materials' },
@@ -143,6 +140,22 @@ function saveExpanded(set) {
   try { localStorage.setItem(NAV_KEY, JSON.stringify([...set])); } catch (e) { /* ignore */ }
 }
 
+// Fills the page's own search box when the address has ?q=
+function applyUrlSearch() {
+  const q = new URLSearchParams(location.search).get('q');
+  if (!q) return;
+  let tries = 0;
+  const apply = () => {
+    const box = document.querySelector('#toolbar input[type="search"], #toolbar input[placeholder^="Search"]');
+    if (!box) return false;
+    box.value = q;
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  };
+  if (apply()) return;
+  const t = setInterval(() => { if (apply() || ++tries > 40) clearInterval(t); }, 150);
+}
+
 // Every page calls this first. Returns the signed-in context, or null if it is redirecting.
 // Pass { allowNoCompany: true } on the home page so it can show the company setup form.
 export async function startPage(opts = {}) {
@@ -177,6 +190,7 @@ export async function startPage(opts = {}) {
   const panelEl = document.getElementById('panel');
   if (panelEl && FILTER_PAGES.has(normPath(location.pathname))) watchTableFilters(panelEl);
   showInvitationBar();
+  applyUrlSearch();
   reveal();
 
   return {
@@ -219,6 +233,24 @@ function buildShell(session, memberships, active) {
     brand.textContent = 'Finance App';
   }
   sidebar.append(brand);
+
+  const sform = h('form', 'side-search');
+  sform.style.cssText = 'padding:0 .75rem .5rem';
+  const sbox = h('input');
+  sbox.type = 'search';
+  sbox.placeholder = 'Search everything ( / )';
+  sbox.setAttribute('aria-label', 'Search everything');
+  sbox.style.width = '100%';
+  sform.append(sbox);
+  sform.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const v = sbox.value.trim();
+    if (v) location.href = `/pages/search.html?q=${encodeURIComponent(v)}`;
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === '/' && !/^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || '')) { e.preventDefault(); sbox.focus(); }
+  });
+  sidebar.append(sform);
 
   const co = h('div', 'co');
   co.append(h('div', 'lbl', 'Company'));
