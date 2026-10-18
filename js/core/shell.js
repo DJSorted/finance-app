@@ -10,7 +10,7 @@ const NAV = [
   { section: 'Overview', pinned: true, items: [{ href: '/', label: 'Home' }, { href: '/pages/search.html', label: 'Search' }] },
   { section: 'Accounting', items: [
     { href: '/pages/journals.html', label: 'Journals' },
-     { href: '/pages/trial-balance.html', label: 'Trial Balance' },
+    { href: '/pages/trial-balance.html', label: 'Trial Balance' },
     { href: '/pages/general-ledger.html', label: 'General Ledger' },
     { href: '/pages/open-items.html', label: 'Open Items' },
     { href: '/pages/party-ledgers.html', label: 'Debtors & Creditors Ledger' },
@@ -33,7 +33,6 @@ const NAV = [
     { href: '/pages/calendar.html', label: 'Financial Calendar' },
     { href: '/pages/year-end.html', label: 'Year-End Close' },
     { href: '/pages/delete-company.html', label: 'Delete Company', ownerOnly: true },
-    { href: '/pages/year-end.html', label: 'Year-End Close' },
     { href: '/pages/currencies.html', label: 'Currencies & Rates' },
     { href: '/pages/data-info.html', label: 'Data & Records' },
     { href: '/pages/attachments.html', label: 'Attachments' },
