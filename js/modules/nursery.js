@@ -2,7 +2,7 @@ import { supabase } from '../core/supabase.js';
 import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
-import { openAttachmentsDialog } from '../core/attachments.js';
+import { openAttachmentsDialog, clipCell, clipHead, fillClips } from '../core/attachments.js';
 
 const ctx = await startPage();
 
@@ -193,13 +193,15 @@ function renderBatches() {
       <td class="num">${qtyFmt(b.qty_released)}</td><td class="num">${qtyFmt(b.qty_lost)}</td>
       <td class="num">${money(b.wip_balance)}</td><td class="num">${Number(b.qty_alive) > 0 ? money(perPlant(b)) : ''}</td>
       <td>${esc(b.stage || '')}</td><td>${b.expected_ready || ''}${ready ? ' <span class="badge open">Ready</span>' : ''}</td>
-      <td><span class="badge ${b.status === 'written_off' ? 'st-error' : (b.status === 'closed' ? '' : 'st-update')}">${STATUS[b.status]}</span></td></tr>`;
+      <td><span class="badge ${b.status === 'written_off' ? 'st-error' : (b.status === 'closed' ? '' : 'st-update')}">${STATUS[b.status]}</span></td>
+      ${clipCell('nursery_batches', b.id)}</tr>`;
   }).join('');
   panel.innerHTML = `<p class="muted">${list.length} batch(es) · ${qtyFmt(alive)} plants still growing · work in progress ${money(wip)} ${esc(base)}</p>
     <div class="table-wrap"><table class="grid"><thead><tr><th>Batch</th><th>Name</th><th>Variety</th><th>Sown</th><th>Age</th>
     <th style="text-align:right">Started</th><th style="text-align:right">Growing</th><th style="text-align:right">Released</th>
     <th style="text-align:right">Lost</th><th style="text-align:right">WIP cost</th><th style="text-align:right">Cost per plant</th>
-    <th>Stage</th><th>Expected ready</th><th>Status</th></tr></thead><tbody>${body}</tbody></table></div>`;
+    <th>Stage</th><th>Expected ready</th><th>Status</th>${clipHead}</tr></thead><tbody>${body}</tbody></table></div>`;
+  fillClips(ctx, panel, (id) => { const b = batchMap.get(id); return `Attachments: ${(b && b.batch_no) || ''}`; });
 }
 
 panel.addEventListener('click', (e) => {

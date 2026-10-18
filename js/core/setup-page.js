@@ -2,7 +2,7 @@ import { supabase } from './supabase.js';
 import { ui } from './ui.js';
 import { exportSheets } from './export.js';
 import { openSetupImport, hasImport } from './setup-import.js';
-import { openAttachmentsDialog, TABLE_LABELS } from './attachments.js';
+import { openAttachmentsDialog, TABLE_LABELS, clipCell, clipHead, fillClips } from './attachments.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -102,7 +102,7 @@ export async function setupPage(ctx, cfg) {
     const list = visibleRows();
     if (!list.length) { panel.innerHTML = '<p class="muted">Nothing matches your search.</p>'; return; }
     const cols = cfg.columns(lk);
-    const head = cols.map((c) => `<th${c.num ? ' style="text-align:right"' : ''}>${esc(c.header)}</th>`).join('') + '<th></th>';
+    const head = cols.map((c) => `<th${c.num ? ' style="text-align:right"' : ''}>${esc(c.header)}</th>`).join('') + (canAttach ? clipHead : '') + '<th></th>';
     const body = list.map((r) => {
       const tds = cols.map((c) => `<td${c.num ? ' class="num"' : ''}>${c.html ? c.html(r) : esc(c.text(r))}</td>`).join('');
       const attachBtn = canAttach ? '<button class="btn btn-sm" data-act="attach">Attach</button>' : '';
@@ -113,9 +113,16 @@ export async function setupPage(ctx, cfg) {
         ? `<button class="btn btn-sm" data-act="edit">Edit</button>${canDelete ? '<button class="btn btn-sm" data-act="del">Delete</button>' : ''}`
         : '';
       const acts = attachBtn || extra || editBtns ? `<div class="row-actions">${extra}${attachBtn}${editBtns}</div>` : '';
-      return `<tr data-id="${r.id}" class="${r.is_active === false ? 'inactive' : ''}">${tds}<td>${acts}</td></tr>`;
+      return `<tr data-id="${r.id}" class="${r.is_active === false ? 'inactive' : ''}">${tds}${canAttach ? clipCell(cfg.table, r.id) : ''}<td>${acts}</td></tr>`;
     }).join('');
     panel.innerHTML = `<div class="table-wrap"><table class="grid"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+    if (canAttach) {
+      fillClips(ctx, panel, (id) => {
+        const row = rows.find((r) => r.id === id);
+        const name = row ? [row.code, row.name].filter(Boolean).join(' - ') : '';
+        return `Attachments: ${cfg.noun}${name ? ` ${name}` : ''}`;
+      });
+    }
   }
 
   async function openForm(row) {

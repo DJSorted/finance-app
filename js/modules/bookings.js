@@ -3,7 +3,7 @@ import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
 import { logoUrl } from '../core/logo.js';
-import { openAttachmentsDialog } from '../core/attachments.js';
+import { openAttachmentsDialog, clipCell, clipHead, fillClips } from '../core/attachments.js';
 
 const ctx = await startPage();
 
@@ -301,11 +301,12 @@ function renderTable() {
       ${b.status === 'provisional' ? ` <span class="badge ${holdExpired(b) ? 'st-error' : ''}">${holdExpired(b) ? 'Hold expired' : `Hold to ${b.hold_until}`}</span>` : ''}
       ${b.availability_override ? ' <span class="badge st-error">Override</span>' : ''}</td>
     <td>${invoiceCell(b)}</td>
-    <td class="num">${money(b.total)}</td><td>${rowActions(b)}</td></tr>`).join('');
+    <td class="num">${money(b.total)}</td>${clipCell('bookings', b.id)}<td>${rowActions(b)}</td></tr>`).join('');
   panel.innerHTML = `<p class="muted">${list.length} of ${bookings.length} bookings</p>
     <div class="table-wrap"><table class="grid"><thead><tr><th>No</th><th>Event</th><th>Customer</th><th>Venue</th>
-    <th>Dates</th><th style="text-align:right">Days</th><th>Status</th><th>Invoice</th><th style="text-align:right">Total</th><th></th></tr></thead>
+    <th>Dates</th><th style="text-align:right">Days</th><th>Status</th><th>Invoice</th><th style="text-align:right">Total</th>${clipHead}<th></th></tr></thead>
     <tbody>${body}</tbody></table></div>`;
+  fillClips(ctx, panel, (id) => { const b = bookings.find((x) => x.id === id); return `Attachments: ${(b && b.booking_no) || ''}`; });
 }
 
 panel.addEventListener('click', async (e) => {

@@ -2,7 +2,7 @@ import { supabase } from '../core/supabase.js';
 import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
-import { openAttachmentsDialog, uploadAttachment, validateFile, ALLOWED_EXT } from '../core/attachments.js';
+import { openAttachmentsDialog, uploadAttachment, validateFile, ALLOWED_EXT, clipCell, clipHead, fillClips } from '../core/attachments.js';
 
 const ctx = await startPage();
 
@@ -140,10 +140,12 @@ function renderTable() {
   const body = list.map((d) => `<tr class="clickable" data-id="${d.id}">
     <td>${esc(d.doc_no || 'Draft')}</td><td>${d.doc_date}</td><td>${esc(supName(d))}</td><td>${esc(d.supplier_ref)}</td>
     <td>${esc(d.currency_code)}</td><td class="num">${money(d.gross_total, decOf(d.currency_code))}</td>
-    <td><span class="badge ${d.status === 'posted' ? 'open' : ''}">${d.status === 'posted' ? 'Posted' : 'Draft'}</span></td></tr>`).join('');
+    <td><span class="badge ${d.status === 'posted' ? 'open' : ''}">${d.status === 'posted' ? 'Posted' : 'Draft'}</span></td>
+    ${clipCell('purchase_documents', d.id)}</tr>`).join('');
   panel.innerHTML = `<div class="table-wrap"><table class="grid"><thead><tr>
-    <th>No</th><th>Date</th><th>Supplier</th><th>Supplier ref</th><th>Cur</th><th style="text-align:right">Total</th><th>Status</th>
+    <th>No</th><th>Date</th><th>Supplier</th><th>Supplier ref</th><th>Cur</th><th style="text-align:right">Total</th><th>Status</th>${clipHead}
     </tr></thead><tbody>${body}</tbody></table></div>`;
+  fillClips(ctx, panel, (id) => { const d = docs.find((x) => x.id === id); return `Attachments: ${LABEL} ${(d && d.doc_no) || 'draft'}`; });
 }
 
 panel.addEventListener('click', (e) => {

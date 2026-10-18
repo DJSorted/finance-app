@@ -2,7 +2,7 @@ import { supabase } from '../core/supabase.js';
 import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
-import { openAttachmentsDialog } from '../core/attachments.js';
+import { openAttachmentsDialog, clipCell, clipHead, fillClips } from '../core/attachments.js';
 
 const ctx = await startPage();
 
@@ -136,12 +136,13 @@ function render() {
     <td>${esc(r.asset_no)}</td><td>${esc(r.name)}</td><td>${esc(r.category_code)}</td>
     <td>${r.tracking === 'pooled' ? 'Pooled' : 'Serialised'}</td><td>${esc(r.serial_no || '')}</td>
     <td class="num">${qtyFmt(r.qty)}</td><td>${r.in_service_date}</td>
-    <td class="num">${money(r.cost)}</td><td class="num">${money(r.accumulated)}</td><td class="num">${money(r.nbv)}</td></tr>`).join('');
+    <td class="num">${money(r.cost)}</td><td class="num">${money(r.accumulated)}</td><td class="num">${money(r.nbv)}</td>${clipCell('fixed_assets', r.asset_id)}</tr>`).join('');
   panel.innerHTML = `<div class="table-wrap"><table class="grid"><thead><tr>
     <th>No</th><th>Name</th><th>Category</th><th>Type</th><th>Serial / tag</th><th style="text-align:right">Qty</th><th>In service</th>
-    <th style="text-align:right">Cost</th><th style="text-align:right">Accum. depreciation</th><th style="text-align:right">Net book value</th></tr></thead>
+    <th style="text-align:right">Cost</th><th style="text-align:right">Accum. depreciation</th><th style="text-align:right">Net book value</th>${clipHead}</tr></thead>
     <tbody>${body}<tr class="row-root"><td colspan="7">Total (${esc(base)})</td><td class="num">${money(tot.cost)}</td>
-    <td class="num">${money(tot.acc)}</td><td class="num">${money(tot.nbv)}</td></tr></tbody></table></div>`;
+    <td class="num">${money(tot.acc)}</td><td class="num">${money(tot.nbv)}</td><td></td></tr></tbody></table></div>`;
+  fillClips(ctx, panel, (id) => { const r = rows.find((x) => x.asset_id === id); return `Attachments: ${(r && r.asset_no) || ''}`; });
 }
 
 panel.addEventListener('click', (e) => {

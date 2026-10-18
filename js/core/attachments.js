@@ -64,6 +64,89 @@ export function validateUrl(u) {
   return '';
 }
 
+/* ---------- paperclip on list rows ---------- */
+
+// Per table: record id -> attachment rows. Ids that were fetched and had nothing map to [].
+const clipCache = new Map();
+const clipCtx = new Map();
+const CLIP_COLS = 'id, record_id, file_name, url, storage_path, uploaded_at';
+
+const tableCache = (table) => {
+  if (!clipCache.has(table)) clipCache.set(table, new Map());
+  return clipCache.get(table);
+};
+
+async function fetchClips(ctx, table, ids) {
+  const cache = tableCache(table);
+  for (let i = 0; i < ids.length; i += 100) {
+    const chunk = ids.slice(i, i + 100);
+    const { data, error } = await supabase.from('attachments').select(CLIP_COLS)
+      .eq('company_id', ctx.companyId).eq('table_name', table).in('record_id', chunk).order('uploaded_at', { ascending: false });
+    if (error) throw error;
+    chunk.forEach((id) => cache.set(id, []));
+    data.forEach((r) => cache.get(r.record_id).push(r));
+  }
+}
+
+function paintClip(td) {
+  const rows = (clipCache.get(td.dataset.clipTable) || new Map()).get(td.dataset.clip) || [];
+  if (!rows.length) { td.replaceChildren(); return; }
+  const b = el('button', 'btn btn-sm clip-btn', rows.length > 1 ? `📎 ${rows.length}` : '📎');
+  b.type = 'button';
+  b.dataset.clipOpen = '1';
+  b.title = rows.length > 1 ? `${rows.length} attachments:\n${rows.map((r) => r.file_name).join('\n')}` : `Open ${rows[0].file_name}`;
+  b.setAttribute('aria-label', b.title);
+  td.replaceChildren(b);
+}
+
+// Empty cell for a list row. Call fillClips(ctx, container) after the table is in the page.
+export const clipCell = (table, recordId) => `<td class="clip" data-clip-table="${esc(table)}" data-clip="${esc(recordId)}"></td>`;
+export const clipHead = '<th class="clip" aria-label="Attachments"></th>';
+
+// Fills the clip cells in a container. One attachment opens straight away; more opens the attachments dialog.
+export async function fillClips(ctx, container, titleFor) {
+  const cells = [...container.querySelectorAll('td[data-clip]')];
+  const byTable = new Map();
+  cells.forEach((td) => {
+    const t = td.dataset.clipTable;
+    clipCtx.set(t, ctx);
+    if (!tableCache(t).has(td.dataset.clip)) {
+      if (!byTable.has(t)) byTable.set(t, new Set());
+      byTable.get(t).add(td.dataset.clip);
+    }
+  });
+  if (!container._clipBound) {
+    container._clipBound = true;
+    container.addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-clip-open]');
+      if (!b) return;
+      e.stopPropagation();
+      const td = b.closest('td[data-clip]');
+      const table = td.dataset.clipTable;
+      const rows = tableCache(table).get(td.dataset.clip) || [];
+      if (rows.length === 1) return openAttachment(rows[0]);
+      await openAttachmentsDialog(ctx, { table, recordId: td.dataset.clip, title: container._clipTitle ? container._clipTitle(td.dataset.clip) : undefined });
+    }, true);
+  }
+  container._clipTitle = titleFor;
+  try {
+    for (const [t, ids] of byTable) await fetchClips(ctx, t, [...ids]);
+  } catch (e) { return; } // the paperclip is a convenience; the list still works without it
+  cells.forEach((td) => { if (td.isConnected) paintClip(td); });
+}
+
+// After attachments for a record change, refetch them and repaint any clip cell on screen
+async function clipChanged(table, recordId) {
+  const cache = clipCache.get(table);
+  if (!cache) return;
+  cache.delete(recordId);
+  const ctx = clipCtx.get(table);
+  const cells = [...document.querySelectorAll('td[data-clip]')].filter((td) => td.dataset.clipTable === table && td.dataset.clip === recordId);
+  if (!ctx || !cells.length) return;
+  try { await fetchClips(ctx, table, [recordId]); } catch (e) { return; }
+  cells.forEach(paintClip);
+}
+
 // Files are stored under <company id>/..., which is what the storage policies check
 export async function uploadAttachment(ctx, table, recordId, file, description) {
   const err = validateFile(file);
@@ -81,6 +164,7 @@ export async function uploadAttachment(ctx, table, recordId, file, description) 
     await supabase.storage.from('attachments').remove([path]);
     throw error;
   }
+  clipChanged(table, recordId);
 }
 
 // A link to a file kept somewhere else (Drive, Dropbox, a supplier's site)
@@ -193,7 +277,7 @@ export function editAttachmentDialog(row) {
 export function openAttachmentsDialog(ctx, { table, recordId, title }) {
   return new Promise((resolve) => {
     const { box, close: closeModal } = makeModal(title || `Attachments: ${TABLE_LABELS[table] || table}`, 'modal wide');
-    const close = () => { closeModal(); resolve(); };
+    const close = () => { closeModal(); clipChanged(table, recordId); resolve(); };
     const canUpload = ['owner', 'admin', 'accountant', 'clerk'].includes(ctx.role);
     const listEl = el('div');
     box.append(listEl);

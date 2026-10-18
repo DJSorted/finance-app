@@ -3,7 +3,7 @@ import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
 import { printPurchaseOrder } from '../core/print-docs.js';
-import { openAttachmentsDialog } from '../core/attachments.js';
+import { openAttachmentsDialog, clipCell, clipHead, fillClips } from '../core/attachments.js';
 
 const ctx = await startPage();
 
@@ -120,10 +120,12 @@ function renderTable() {
     <td>${esc(o.warehouses ? o.warehouses.code : '')}</td><td>${esc(o.currency_code)}</td>
     <td class="num">${money(o.total, decOf(o.currency_code))}</td>
     <td><span class="badge ${o.status === 'approved' ? 'open' : ''}">${STATUS[o.status]}</span>
-      ${o.status === 'approved' || o.status === 'closed' ? `<span class="badge">${receiptState(o)}</span>` : ''}</td></tr>`).join('');
+      ${o.status === 'approved' || o.status === 'closed' ? `<span class="badge">${receiptState(o)}</span>` : ''}</td>
+    ${clipCell('purchase_orders', o.id)}</tr>`).join('');
   panel.innerHTML = `<div class="table-wrap"><table class="grid"><thead><tr>
-    <th>No</th><th>Date</th><th>Supplier</th><th>Warehouse</th><th>Cur</th><th style="text-align:right">Total</th><th>Status</th>
+    <th>No</th><th>Date</th><th>Supplier</th><th>Warehouse</th><th>Cur</th><th style="text-align:right">Total</th><th>Status</th>${clipHead}
     </tr></thead><tbody>${body}</tbody></table></div>`;
+  fillClips(ctx, panel, (id) => { const o = orders.find((x) => x.id === id); return `Attachments: Purchase order ${(o && o.po_no) || 'draft'}`; });
 }
 
 panel.addEventListener('click', (e) => {

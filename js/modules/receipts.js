@@ -3,7 +3,7 @@ import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
 import { createAllocationGrid } from '../core/allocation-grid.js';
-import { openAttachmentsDialog } from '../core/attachments.js';
+import { openAttachmentsDialog, clipCell, clipHead, fillClips } from '../core/attachments.js';
 
 const ctx = await startPage();
 
@@ -107,11 +107,13 @@ function renderTable() {
       <td>${esc(r.receipt_no)}</td><td>${r.receipt_date}</td><td>${esc(custName(r))}</td><td>${esc(r.reference || '')}</td>
       <td>${esc(r.currency_code)}</td><td class="num">${money(r.amount, d)}</td>
       <td class="num">${money(Number(r.amount) - Number(r.allocated_amount), d)}</td>
-      <td><span class="badge ${r.status === 'posted' ? 'open' : ''}">${r.status === 'posted' ? 'Posted' : 'Reversed'}</span></td></tr>`;
+      <td><span class="badge ${r.status === 'posted' ? 'open' : ''}">${r.status === 'posted' ? 'Posted' : 'Reversed'}</span></td>
+      ${clipCell('customer_receipts', r.id)}</tr>`;
   }).join('');
   panel.innerHTML = `<div class="table-wrap"><table class="grid"><thead><tr>
     <th>No</th><th>Date</th><th>Customer</th><th>Reference</th><th>Cur</th><th style="text-align:right">Amount</th>
-    <th style="text-align:right">On account</th><th>Status</th></tr></thead><tbody>${body}</tbody></table></div>`;
+    <th style="text-align:right">On account</th><th>Status</th>${clipHead}</tr></thead><tbody>${body}</tbody></table></div>`;
+  fillClips(ctx, panel, (id) => { const r = receipts.find((x) => x.id === id); return `Attachments: Receipt ${(r && r.receipt_no) || ''}`; });
 }
 
 panel.addEventListener('click', (e) => {

@@ -2,7 +2,7 @@ import { supabase } from '../core/supabase.js';
 import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
-import { openAttachmentsDialog } from '../core/attachments.js';
+import { openAttachmentsDialog, clipCell, clipHead, fillClips } from '../core/attachments.js';
 
 const ctx = await startPage();
 
@@ -130,12 +130,14 @@ function renderTable() {
     return `<tr class="clickable" data-id="${o.id}"><td>${esc(o.wo_no)}</td><td>${o.order_date}</td><td>${esc(itemLabel(o.item_id))}</td>
       <td class="num">${qtyFmt(o.qty_planned)}</td><td class="num">${qtyFmt(o.qty_received)}</td><td class="num">${money(o.wip_balance)}</td>
       <td>${o.due_date || ''}${late ? ' <span class="badge st-error">Overdue</span>' : ''}</td>
-      <td><span class="badge ${o.status === 'open' ? 'st-update' : ''}">${STATUS[o.status]}</span></td></tr>`;
+      <td><span class="badge ${o.status === 'open' ? 'st-update' : ''}">${STATUS[o.status]}</span></td>
+      ${clipCell('work_orders', o.id)}</tr>`;
   }).join('');
   panel.innerHTML = `<p class="muted">${list.length} order(s) · work in progress ${money(wip)} ${esc(base)}</p>
     <div class="table-wrap"><table class="grid"><thead><tr><th>Order</th><th>Date</th><th>Finished item</th>
-    <th style="text-align:right">Planned</th><th style="text-align:right">Received</th><th style="text-align:right">WIP cost</th><th>Due</th><th>Status</th></tr></thead>
+    <th style="text-align:right">Planned</th><th style="text-align:right">Received</th><th style="text-align:right">WIP cost</th><th>Due</th><th>Status</th>${clipHead}</tr></thead>
     <tbody>${body}</tbody></table></div>`;
+  fillClips(ctx, panel, (id) => { const o = orders.find((x) => x.id === id); return `Attachments: ${(o && o.wo_no) || ''}`; });
 }
 
 panel.addEventListener('click', (e) => {

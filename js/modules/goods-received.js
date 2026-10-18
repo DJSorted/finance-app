@@ -2,7 +2,7 @@ import { supabase } from '../core/supabase.js';
 import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
-import { openAttachmentsDialog } from '../core/attachments.js';
+import { openAttachmentsDialog, clipCell, clipHead, fillClips } from '../core/attachments.js';
 
 const ctx = await startPage();
 
@@ -132,10 +132,11 @@ function renderTable() {
     <td>${esc(g.grn_no)}</td><td>${g.receipt_date}</td><td>${esc(supName(g))}</td><td>${esc(g.supplier_ref || '')}</td>
     <td>${esc(g.purchase_orders ? g.purchase_orders.po_no : 'Direct')}</td><td>${esc(g.warehouses ? g.warehouses.code : '')}</td>
     <td>${esc(g.currency_code)}</td><td class="num">${money(g.total_trx, decOf(g.currency_code))}</td>
-    <td class="num">${money(g.total_base)}</td></tr>`).join('');
+    <td class="num">${money(g.total_base)}</td>${clipCell('goods_receipts', g.id)}</tr>`).join('');
   panel.innerHTML = `<div class="table-wrap"><table class="grid"><thead><tr>
     <th>No</th><th>Date</th><th>Supplier</th><th>Delivery note</th><th>Order</th><th>Warehouse</th><th>Cur</th>
-    <th style="text-align:right">Value</th><th style="text-align:right">${esc(base)}</th></tr></thead><tbody>${body}</tbody></table></div>`;
+    <th style="text-align:right">Value</th><th style="text-align:right">${esc(base)}</th>${clipHead}</tr></thead><tbody>${body}</tbody></table></div>`;
+  fillClips(ctx, panel, (id) => { const g = receipts.find((x) => x.id === id); return `Attachments: Goods received ${(g && g.grn_no) || ''}`; });
 }
 
 panel.addEventListener('click', (e) => {

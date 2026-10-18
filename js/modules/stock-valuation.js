@@ -82,7 +82,8 @@ async function init() {
   whSel.append(all);
   warehouses.forEach((x) => { const o = el('option', '', `${x.code} - ${x.name}`); o.value = x.id; whSel.append(o); });
   whSel.addEventListener('change', render);
-  toolbar.append(el('span', 'muted', 'As at'), asOfEl, whSel, btn('Run', 'btn-primary', run),
+  groupSel.addEventListener('change', render);
+  toolbar.append(el('span', 'muted', 'As at'), asOfEl, whSel, groupSel, btn('Run', 'btn-primary', run),
     el('span', 'spacer'), btn('Export to Excel', '', doExport));
   hint.textContent = `Values in ${base}, at weighted average cost. Click a row to see its movements.`;
   await run();
@@ -90,11 +91,13 @@ async function init() {
 
 async function run() {
   if (!asOfEl.value) return ui.warn('Choose the date.');
-  const [v, r] = await Promise.all([
+  const [v, r, g] = await Promise.all([
     supabase.rpc('stock_valuation', { p_company: ctx.companyId, p_as_of: asOfEl.value }),
     supabase.rpc('stock_reconciliation', { p_company: ctx.companyId, p_as_of: asOfEl.value }),
+    loadGroups().then(() => null, (e) => e),
   ]);
   if (v.error) return ui.errorFrom(v.error, 'Could not run the valuation.');
+  if (g) ui.errorFrom(g, 'Could not load the item groups.');
   rows = v.data;
   render();
   renderRecon(r);

@@ -2,7 +2,7 @@ import { supabase } from '../core/supabase.js';
 import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
-import { openAttachmentsDialog } from '../core/attachments.js';
+import { openAttachmentsDialog, clipCell, clipHead, fillClips } from '../core/attachments.js';
 
 const ctx = await startPage();
 
@@ -110,10 +110,11 @@ function renderTable() {
     <td>${esc(j.reference || '')}</td>
     <td><span class="badge ${j.status === 'posted' ? 'open' : ''}">${j.status === 'posted' ? 'Posted' : 'Draft'}</span>
         ${j.reversed_by ? '<span class="badge">Reversed</span>' : ''}${j.reversal_of ? '<span class="badge">Reversal</span>' : ''}${j.control_override ? '<span class="badge st-error">Override</span>' : ''}</td>
-    <td class="num">${money(total(j))}</td></tr>`).join('');
+    <td class="num">${money(total(j))}</td>${clipCell('journals', j.id)}</tr>`).join('');
   panel.innerHTML = `<div class="table-wrap"><table class="grid"><thead><tr>
-    <th>No</th><th>Date</th><th>Description</th><th>Reference</th><th>Status</th><th style="text-align:right">Amount</th>
+    <th>No</th><th>Date</th><th>Description</th><th>Reference</th><th>Status</th><th style="text-align:right">Amount</th>${clipHead}
     </tr></thead><tbody>${body}</tbody></table></div>`;
+  fillClips(ctx, panel, (id) => { const j = journals.find((x) => x.id === id); return `Attachments: ${(j && j.journal_no) || 'draft journal'}`; });
 }
 
 panel.addEventListener('click', (e) => {
