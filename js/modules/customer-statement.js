@@ -22,6 +22,7 @@ let custId = new URLSearchParams(location.search).get('customer') || '';
 let stmt = [];
 let openItems = [];
 let apps = [];
+let allocs = [];
 let ran = false;
 
 function el(tag, cls, text) {
@@ -96,8 +97,59 @@ async function run() {
   stmt = s.data;
   openItems = o.data;
   apps = a.data;
+  allocs = await loadAllocations();
   ran = true;
   render();
+}
+
+// Receipt allocations touching the open invoices and open receipts, as they stood at the To date.
+// Only adds detail to the balance breakdown, so a failure leaves it out rather than stopping the statement.
+async function loadAllocations() {
+  const inv = openItems.filter((i) => i.doc_kind === 'invoice').map((i) => i.doc_id);
+  const rec = openItems.filter((i) => i.doc_kind === 'receipt').map((i) => i.doc_id);
+  if (!inv.length && !rec.length) return [];
+  const or = [inv.length ? `invoice_id.in.(${inv.join(',')})` : '', rec.length ? `receipt_id.in.(${rec.join(',')})` : ''].filter(Boolean).join(',');
+  const { data, error } = await supabase.from('sales_allocations')
+    .select('receipt_id, invoice_id, amount, receipt:customer_receipts(receipt_no, receipt_date, status, reversed_on), invoice:sales_documents!sales_allocations_invoice_id_fkey(doc_no)')
+    .or(or);
+  if (error) return [];
+  const to = toEl.value;
+  return data.filter((a) => a.receipt && a.receipt.receipt_date <= to
+    && !(a.receipt.status === 'reversed' && a.receipt.reversed_on && a.receipt.reversed_on <= to));
+}
+
+/* The balance by source document: each open item with its original amount, what has been paid or applied
+   against it (receipts named individually) and what is left. Per currency, the outstanding amounts add up to the balance. */
+function balanceBlocks() {
+  const byCur = new Map();
+  openItems.forEach((i) => {
+    const dec = decOf(i.currency_code);
+    const outstanding = Number(i.outstanding);
+    const original = (outstanding < 0 ? -1 : 1) * Math.abs(Number(i.original));
+    const applied = roundTo(outstanding - original, dec);
+    const detail = [];
+    if (i.doc_kind === 'invoice' || i.doc_kind === 'receipt') {
+      const isInv = i.doc_kind === 'invoice';
+      allocs.filter((a) => (isInv ? a.invoice_id : a.receipt_id) === i.doc_id).forEach((a) => detail.push(isInv
+        ? { text: `Receipt ${a.receipt.receipt_no || ''} on ${a.receipt.receipt_date}`, amount: -Number(a.amount) }
+        : { text: `Applied to invoice ${a.invoice ? a.invoice.doc_no : ''}`, amount: Number(a.amount) }));
+      const rest = roundTo(applied - detail.reduce((s, x) => s + x.amount, 0), dec);
+      if (detail.length && Math.abs(rest) >= 0.005) {
+        detail.push({ text: isInv ? 'Credit notes and other credits applied' : 'Other applications', amount: rest });
+      }
+    }
+    if (!byCur.has(i.currency_code)) byCur.set(i.currency_code, { cur: i.currency_code, dec, items: [], total: 0 });
+    const b = byCur.get(i.currency_code);
+    b.items.push({ src: i, type: KIND[i.doc_kind] || i.doc_kind, no: i.doc_no || '', date: i.doc_date,
+      due: i.doc_kind === 'invoice' ? i.due_date : '', original, applied, outstanding, detail });
+    b.total += outstanding;
+  });
+  const blocks = [...byCur.values()].sort((a, b) => a.cur.localeCompare(b.cur));
+  blocks.forEach((b) => {
+    b.total = roundTo(b.total, b.dec);
+    b.items.sort((x, y) => x.date.localeCompare(y.date) || x.no.localeCompare(y.no));
+  });
+  return blocks;
 }
 
 /* ---------- render ---------- */
@@ -144,24 +196,26 @@ function render() {
       <tr class="row-root"><td colspan="6">Closing balance at ${esc(toEl.value)}</td><td class="num">${fmt(b.closing, b.dec) || '0.00'}</td><td></td></tr></tbody></table></div></div>`;
   });
 
-  // open items
+  // balance by source document (the open items, with what was paid or applied against each)
+  const balBlocks = balanceBlocks();
   const baseTotal = openItems.reduce((s, i) => s + Number(i.base_outstanding), 0);
-  const oiBody = openItems.map((i) => {
-    const d = decOf(i.currency_code);
+  const oiBody = balBlocks.map((b) => b.items.map((x) => {
+    const i = x.src;
     const over = i.doc_kind === 'invoice' ? Math.round((new Date(`${toEl.value}T00:00:00Z`) - new Date(`${i.due_date}T00:00:00Z`)) / 86400000) : '';
-    return `<tr><td>${esc(KIND[i.doc_kind] || i.doc_kind)}</td><td>${esc(i.doc_no || '')}</td><td>${i.doc_date}</td>
-      <td>${i.doc_kind === 'invoice' ? i.due_date : ''}</td><td>${esc(i.currency_code)}</td>
-      <td class="num">${fmt(Number(i.original), d)}</td><td class="num">${fmt(Number(i.outstanding), d)}</td>
+    return `<tr><td>${esc(x.type)}</td><td>${esc(x.no)}</td><td>${x.date}</td><td>${x.due || ''}</td><td>${esc(b.cur)}</td>
+      <td class="num">${fmt(x.original, b.dec)}</td><td class="num">${fmt(x.applied, b.dec)}</td><td class="num">${fmt(x.outstanding, b.dec)}</td>
       <td class="num">${fmt(Number(i.base_outstanding))}</td>
-      <td class="num">${over !== '' && over > 0 ? over : ''}</td></tr>`;
-  }).join('');
-  html += `<div class="card" style="margin-bottom:1rem"><h3>Open items at ${esc(toEl.value)}</h3>
+      <td class="num">${over !== '' && over > 0 ? over : ''}</td></tr>
+      ${x.detail.map((d) => `<tr><td></td><td colspan="5" class="muted" style="padding-left:1.5rem">${esc(d.text)}</td>
+        <td class="num muted">${fmt(d.amount, b.dec)}</td><td colspan="3"></td></tr>`).join('')}`;
+  }).join('') + `<tr class="row-parent"><td colspan="7">Balance (${esc(b.cur)})</td><td class="num">${fmt(b.total, b.dec) || '0.00'}</td><td colspan="2"></td></tr>`).join('');
+  html += `<div class="card" style="margin-bottom:1rem"><h3>Balance by document at ${esc(toEl.value)}</h3>
     ${openItems.length ? `<div class="table-wrap"><table class="grid"><thead><tr><th>Type</th><th>No</th><th>Date</th><th>Due</th><th>Cur</th>
-      <th style="text-align:right">Original</th><th style="text-align:right">Outstanding</th>
+      <th style="text-align:right">Original</th><th style="text-align:right">Paid / applied</th><th style="text-align:right">Outstanding</th>
       <th style="text-align:right">${esc(base)}</th><th style="text-align:right">Days overdue</th></tr></thead>
-      <tbody>${oiBody}<tr class="row-root"><td colspan="7">Total (${esc(base)})</td><td class="num">${fmt(baseTotal) || '0.00'}</td><td></td></tr></tbody></table></div>`
+      <tbody>${oiBody}<tr class="row-root"><td colspan="8">Total (${esc(base)})</td><td class="num">${fmt(baseTotal) || '0.00'}</td><td></td></tr></tbody></table></div>`
     : '<p class="muted">Nothing outstanding.</p>'}
-    <p class="muted">Journal items can be matched against invoices and credits with Apply credits.</p></div>`;
+    <p class="muted">Original + paid / applied = outstanding; the outstanding amounts make up the balance in each currency. Journal items can be matched against invoices and credits with Apply credits.</p></div>`;
 
   // applications
   const appBody = apps.map((a) => `<tr data-app="${a.id}"><td>${a.app_date}</td><td>${esc(a.currency_code)}</td>
@@ -318,6 +372,9 @@ async function printIt() {
     })),
     openItems: openItems.map((i) => ({ type: KIND[i.doc_kind] || i.doc_kind, no: i.doc_no || '', date: i.doc_date,
       due: i.doc_kind === 'invoice' ? i.due_date : '', cur: i.currency_code, outstanding: Number(i.outstanding) })),
+    breakdown: balanceBlocks().map(({ cur, dec, total, items }) => ({
+      cur, dec, total, items: items.map(({ src, ...x }) => x),
+    })),
   });
 }
 
@@ -343,13 +400,15 @@ async function doExport() {
         { key: 'ref', header: 'Reference', width: 18 }, { key: 'debit', header: 'Debit', width: 14 },
         { key: 'credit', header: 'Credit', width: 14 }, { key: 'balance', header: 'Balance', width: 16 },
         { key: 'base', header: `At booked rate (${base})`, width: 20 } ] },
-      { name: 'Open items', rows: openItems.map((i) => ({
-        type: KIND[i.doc_kind] || i.doc_kind, no: i.doc_no || '', date: i.doc_date, due: i.doc_kind === 'invoice' ? i.due_date : '',
-        cur: i.currency_code, original: Number(i.original), outstanding: Number(i.outstanding), base: Number(i.base_outstanding),
-      })), columns: [
-        { key: 'type', header: 'Type', width: 14 }, { key: 'no', header: 'No', width: 14 }, { key: 'date', header: 'Date', width: 12 },
+      { name: 'Balance by document', rows: balanceBlocks().flatMap((b) => b.items.flatMap((x) => [{
+        type: x.type, no: x.no, date: x.date, due: x.due, cur: b.cur, original: x.original, applied: x.applied,
+        outstanding: x.outstanding, base: Number(x.src.base_outstanding),
+      }, ...x.detail.map((d) => ({ type: '', no: `  ${d.text}`, date: '', due: '', cur: b.cur, original: '', applied: d.amount, outstanding: '', base: '' }))])),
+      columns: [
+        { key: 'type', header: 'Type', width: 14 }, { key: 'no', header: 'No', width: 30 }, { key: 'date', header: 'Date', width: 12 },
         { key: 'due', header: 'Due', width: 12 }, { key: 'cur', header: 'Currency', width: 10 },
-        { key: 'original', header: 'Original', width: 14 }, { key: 'outstanding', header: 'Outstanding', width: 14 },
+        { key: 'original', header: 'Original', width: 14 }, { key: 'applied', header: 'Paid / applied', width: 14 },
+        { key: 'outstanding', header: 'Outstanding', width: 14 },
         { key: 'base', header: `Outstanding (${base})`, width: 18 } ] },
     ]);
   } catch (e) { ui.errorFrom(e, 'Could not export.'); }

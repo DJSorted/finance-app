@@ -79,7 +79,7 @@ function docHtml(title, body, s = DEFAULT_SETTINGS) {
       .end{margin-top:auto}
       .closing{margin-top:18px;text-align:center}
       .head{display:flex;justify-content:space-between;align-items:flex-start;gap:24px}
-      .co img{max-height:64px;max-width:220px;display:block;margin-bottom:6px}
+      .co img{max-height:64px;max-width:220px;display:block;margin-bottom:6px;border-radius:10px}
       h1{font-size:22px;margin:0 0 6px}
       h2{font-size:14px;margin:18px 0 4px}
       .muted{color:#555}
@@ -90,6 +90,8 @@ function docHtml(title, body, s = DEFAULT_SETTINGS) {
       table.lines th{background:#f0f0f0;text-align:left;padding:6px 8px;border-bottom:1px solid #999}
       table.lines td{padding:6px 8px;border-bottom:1px solid #ddd;vertical-align:top}
       table.lines tr.strong td{font-weight:bold;background:#f7f7f7}
+      table.lines tr.sub td{border-bottom:0;padding-top:0;color:#555;font-size:11px}
+      table.lines tr.sub td.txt{padding-left:18px}
       .n{text-align:right;white-space:nowrap}
       table.tot{margin-left:auto;width:52%;border-collapse:collapse;margin-top:10px}
       table.tot td{padding:4px 8px}
@@ -425,7 +427,9 @@ export async function printMoneyDocument(ctx, kind, r) {
 /* ---------- statement of account ---------- */
 // opts: { title, partyTable, partyId, from, to, base, headers: { debit, credit, balance },
 //         blocks: [{ cur, dec, opening, closing, lines: [{ date, type, no, ref, debit, credit, balance }] }],
-//         openItems: [{ type, no, date, due, cur, outstanding, base }] }
+//         openItems: [{ type, no, date, due, cur, outstanding, base }],
+//         breakdown (optional, replaces openItems): [{ cur, dec, total,
+//           items: [{ type, no, date, due, original, applied, outstanding, detail: [{ text, amount }] }] }] }
 
 export async function printStatement(ctx, opts) {
   try {
@@ -445,7 +449,15 @@ export async function printStatement(ctx, opts) {
         <td class="n">${r.debit ? money(r.debit, b.dec) : ''}</td><td class="n">${r.credit ? money(r.credit, b.dec) : ''}</td><td class="n">${signed(r.balance, b.dec) || '0.00'}</td></tr>`).join('')}
       <tr class="strong"><td colspan="6">Balance at ${esc(opts.to)} (${esc(b.cur)})</td><td class="n">${signed(b.closing, b.dec) || '0.00'}</td></tr></tbody></table>`).join('');
 
-    const items = opts.openItems.length ? `<h2>Open items at ${esc(opts.to)}</h2>
+    // breakdown (optional): the balance by source document, replacing the plain open items list.
+    const breakdown = (opts.breakdown || []).map((b) => `<h2>Balance by document at ${esc(opts.to)} (${esc(b.cur)})</h2>
+      <table class="lines"><thead><tr><th>Type</th><th>No</th><th>Date</th><th>Due</th><th class="n">Original</th><th class="n">Paid / applied</th><th class="n">Outstanding</th></tr></thead><tbody>
+      ${b.items.map((i) => `<tr><td>${esc(i.type)}</td><td>${esc(i.no)}</td><td>${esc(i.date)}</td><td>${esc(i.due || '')}</td>
+        <td class="n">${signed(i.original, b.dec)}</td><td class="n">${signed(i.applied, b.dec)}</td><td class="n">${signed(i.outstanding, b.dec)}</td></tr>
+        ${i.detail.map((x) => `<tr class="sub"><td></td><td class="txt" colspan="4">${esc(x.text)}</td><td class="n">${signed(x.amount, b.dec)}</td><td></td></tr>`).join('')}`).join('')}
+      <tr class="strong"><td colspan="6">Balance (${esc(b.cur)})</td><td class="n">${signed(b.total, b.dec) || '0.00'}</td></tr></tbody></table>`).join('');
+
+    const items = opts.breakdown ? breakdown : opts.openItems.length ? `<h2>Open items at ${esc(opts.to)}</h2>
       <table class="lines"><thead><tr><th>Type</th><th>No</th><th>Date</th><th>Due</th><th>Cur</th><th class="n">Outstanding</th></tr></thead><tbody>
       ${opts.openItems.map((i) => `<tr><td>${esc(i.type)}</td><td>${esc(i.no)}</td><td>${esc(i.date)}</td><td>${esc(i.due || '')}</td>
         <td>${esc(i.cur)}</td><td class="n">${signed(i.outstanding, 2)}</td></tr>`).join('')}</tbody></table>` : '';
