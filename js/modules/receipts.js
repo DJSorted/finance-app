@@ -4,6 +4,7 @@ import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
 import { createAllocationGrid } from '../core/allocation-grid.js';
 import { openAttachmentsDialog, clipCell, clipHead, fillClips } from '../core/attachments.js';
+import { printMoneyDocument } from '../core/print-docs.js';
 
 const ctx = await startPage();
 
@@ -377,10 +378,14 @@ async function openViewer(r) {
       <td colspan="3" class="muted">On account: ${money(Number(r.amount) - Number(r.allocated_amount), dec)}</td></tr></tbody></table>`;
   node.append(t);
 
-  const buttons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }];
+  const buttons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }, { label: 'Attachments', value: 'attach', className: 'btn-ghost' },
+    { label: 'Print', value: 'print', className: 'btn-ghost' }];
   if (CAN_RATE && r.status === 'posted') buttons.push({ label: 'Reverse', value: 'reverse', className: 'btn-danger' });
   const res = await ui.dialog({ title: `Receipt ${r.receipt_no}`, node, buttons, dismissValue: 'close', wide: true });
-  if (res === 'attach') {
+  if (res === 'print') {
+    await printMoneyDocument(ctx, 'receipt', r);
+    await openViewer(r);
+  } else if (res === 'attach') {
     await openAttachmentsDialog(ctx, { table: 'customer_receipts', recordId: r.id, title: `Attachments: Receipt ${r.receipt_no}` });
     await openViewer(r);
   } else if (res === 'reverse') await reverseReceipt(r);

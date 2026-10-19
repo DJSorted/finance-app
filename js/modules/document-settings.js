@@ -174,7 +174,7 @@ async function init() {
   projRow.append(form.proj, el('label', '', 'Show the project on documents by default'));
   const g2 = el('div', 'form-grid');
   g2.append(field('Greeting (above the lines)', form.greeting, true, 'Optional. For example: Dear {name},'),
-    field('Closing message (below the totals)', form.closing, true),
+    field('Closing message (centred at the bottom of the page)', form.closing, true),
     field('Footer (small print at the bottom)', form.footer, true),
     field('Extra field 1 label', form.e1, false, 'Asked for each time you print. Leave a value empty to leave the field off.'),
     field('Extra field 2 label', form.e2), projRow);

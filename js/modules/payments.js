@@ -4,6 +4,7 @@ import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
 import { createAllocationGrid } from '../core/allocation-grid.js';
 import { openAttachmentsDialog, clipCell, clipHead, fillClips } from '../core/attachments.js';
+import { printMoneyDocument } from '../core/print-docs.js';
 
 const ctx = await startPage();
 
@@ -379,10 +380,14 @@ async function openViewer(p) {
       <td colspan="3" class="muted">On account: ${money(Number(p.amount) - Number(p.allocated_amount), dec)}</td></tr></tbody></table>`;
   node.append(t);
 
-  const buttons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }, { label: 'Attachments', value: 'attach', className: 'btn-ghost' }];
+  const buttons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }, { label: 'Attachments', value: 'attach', className: 'btn-ghost' },
+    { label: 'Print', value: 'print', className: 'btn-ghost' }];
   if (CAN_PAY && p.status === 'posted') buttons.push({ label: 'Reverse', value: 'reverse', className: 'btn-danger' });
   const res = await ui.dialog({ title: `Payment ${p.payment_no}`, node, buttons, dismissValue: 'close', wide: true });
-  if (res === 'attach') {
+  if (res === 'print') {
+    await printMoneyDocument(ctx, 'payment', p);
+    await openViewer(p);
+  } else if (res === 'attach') {
     await openAttachmentsDialog(ctx, { table: 'supplier_payments', recordId: p.id, title: `Attachments: Payment ${p.payment_no}` });
     await openViewer(p);
   } else if (res === 'reverse') await reversePayment(p);

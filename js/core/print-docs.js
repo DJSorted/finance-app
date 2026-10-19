@@ -30,6 +30,13 @@ function detailHtml(row) {
   return out.join('<br>');
 }
 
+// A delivery address: the address and phone numbers only (no email, website or tax numbers).
+function addressHtml(row) {
+  if (!row) return '';
+  const has = (k) => typeof row[k] === 'string' && row[k].trim();
+  return ADDRESS.concat(['phone', 'mobile']).filter(has).map((k) => nl(row[k].trim())).join('<br>');
+}
+
 /* ---------- settings (Document Settings page) ---------- */
 
 export const DEFAULT_SETTINGS = {
@@ -68,6 +75,9 @@ function docHtml(title, body, s = DEFAULT_SETTINGS) {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>
       @page{size:A4;margin:14mm}
       body{font:12px/1.45 Arial,sans-serif;color:#111;margin:0}
+      .page{display:flex;flex-direction:column;min-height:calc(297mm - 28mm - 4px)}
+      .end{margin-top:auto}
+      .closing{margin-top:18px;text-align:center}
       .head{display:flex;justify-content:space-between;align-items:flex-start;gap:24px}
       .co img{max-height:64px;max-width:220px;display:block;margin-bottom:6px}
       h1{font-size:22px;margin:0 0 6px}
@@ -87,10 +97,12 @@ function docHtml(title, body, s = DEFAULT_SETTINGS) {
       .note{margin-top:12px}
       .bank{margin-top:14px;border:1px solid #ccc;border-radius:4px;padding:8px 10px;width:48%;box-sizing:border-box;break-inside:avoid}
       .paid{display:inline-block;margin-top:10px;padding:4px 10px;border:2px solid #1a7f37;color:#1a7f37;border-radius:4px;font-weight:bold;letter-spacing:.05em}
+      .paid.void{border-color:#b42318;color:#b42318}
+      .amount{font-size:18px;font-weight:bold;margin-top:4px}
       .foot{margin-top:26px;border-top:1px solid #ccc;padding-top:8px;color:#444;font-size:11px}
       .sign{display:flex;gap:40px;margin-top:48px}.sign div{flex:1;border-top:1px solid #000;padding-top:4px}
       ${templateCss(s)}
-      </style></head><body>${body}</body></html>`;
+      </style></head><body><div class="page">${body}</div></body></html>`;
 }
 
 // Asks for the extra field values (and whether to show the project) before printing.
@@ -135,7 +147,9 @@ async function askExtras(s, withProject) {
 
 const greetingHtml = (s, name) => (s.greeting && s.greeting.trim()
   ? `<div class="note">${nl(s.greeting.trim().replace(/\{name\}/g, name || ''))}</div>` : '');
-const closingHtml = (s) => (s.closing && s.closing.trim() ? `<div class="note">${nl(s.closing.trim())}</div>` : '');
+const closingHtml = (s) => (s.closing && s.closing.trim() ? `<div class="closing">${nl(s.closing.trim())}</div>` : '');
+// The footer and the closing (thank you) note, pushed to the bottom of the page with the note centred last.
+const endHtml = (company, s) => `<div class="end">${footer(company, s)}${closingHtml(s)}</div>`;
 const bankHtml = (bank) => (bank ? `<div class="bank"><strong>${esc(bank.label)}</strong><br>${nl(bank.details)}</div>` : '');
 
 export function printHtml(title, body, settings) {
@@ -245,7 +259,7 @@ function salesBody({ company, base, d, lines, dec, customer, termsName, s, bank,
         ${payRows}</table>
       ${isPaid ? '<div style="text-align:right"><span class="paid">PAID</span></div>' : ''}
       ${rateNote}${d.notes ? `<div class="note"><strong>Notes</strong><br>${nl(d.notes)}</div>` : ''}
-      ${closingHtml(s)}${isInv && !isPaid ? bankHtml(bank) : ''}${footer(company, s)}`;
+      ${isInv && !isPaid ? bankHtml(bank) : ''}${endHtml(company, s)}`;
   return { title, body };
 }
 
@@ -333,14 +347,78 @@ export async function printPurchaseOrder(ctx, o) {
       ['Order no', o.po_no], ['Date', o.order_date], ['Expected delivery', o.expected_date], ['Reference', o.reference], ...ask.extras,
     ])}
       <div class="parties"><div><div class="muted">Supplier</div><strong>${esc(supplier.name || '')}</strong><div>${detailHtml(supplier)}</div></div>
-        <div><div class="muted">Deliver to</div><strong>${esc(wh)}</strong><div>${detailHtml(co.row)}</div></div></div>
+        <div><div class="muted">Deliver to</div><strong>${esc(wh)}</strong><div>${addressHtml(co.row)}</div></div></div>
       ${greetingHtml(s, supplier.name)}
       <table class="lines"><thead><tr><th>#</th><th>Description</th><th class="n">Quantity</th><th class="n">Unit price</th><th class="n">Total</th></tr></thead>
         <tbody>${rows}</tbody></table>
       <table class="tot"><tr class="grand"><td>Order total (${esc(o.currency_code)})</td><td class="n">${money(o.total, dec)}</td></tr></table>
       ${o.notes ? `<div class="note"><strong>Notes</strong><br>${nl(o.notes)}</div>` : ''}
-      <div class="note muted">Please quote the order number on your delivery note and invoice.</div>${closingHtml(s)}${footer(co.row, s)}`;
+      <div class="note muted">Please quote the order number on your delivery note and invoice.</div>${endHtml(co.row, s)}`;
     await printHtml(`Purchase order ${o.po_no || ''}`, body, s);
+  } catch (e) { ui.errorFrom(e, 'Could not prepare the document for printing.'); }
+}
+
+/* ---------- receipt (payment received) and payment advice (bills paid) ---------- */
+
+const MONEY_DOCS = {
+  receipt: {
+    title: 'Receipt', noLabel: 'Receipt no', partyLabel: 'Received from', amountLabel: 'Amount received',
+    partyTable: 'customers', partyKey: 'customer_id', noKey: 'receipt_no', dateKey: 'receipt_date',
+    allocTable: 'sales_allocations', allocKey: 'receipt_id', docCol: 'Invoice',
+    join: 'doc:sales_documents!sales_allocations_invoice_id_fkey(*)',
+    note: 'Thank you for your payment.',
+  },
+  payment: {
+    title: 'Payment advice', noLabel: 'Payment no', partyLabel: 'Paid to', amountLabel: 'Amount paid',
+    partyTable: 'suppliers', partyKey: 'supplier_id', noKey: 'payment_no', dateKey: 'payment_date',
+    allocTable: 'purchase_allocations', allocKey: 'payment_id', docCol: 'Your invoice',
+    join: 'doc:purchase_documents!purchase_allocations_bill_id_fkey(*)',
+    note: 'Please allocate this payment against the invoices listed.',
+  },
+};
+
+// kind: 'receipt' (customer_receipts row) or 'payment' (supplier_payments row).
+export async function printMoneyDocument(ctx, kind, r) {
+  const k = MONEY_DOCS[kind];
+  try {
+    const [al, party, co, dec, cfg] = await Promise.all([
+      supabase.from(k.allocTable).select(`*, ${k.join}`).eq(k.allocKey, r.id).order('created_at'),
+      supabase.from(k.partyTable).select('*').eq('id', r[k.partyKey]).maybeSingle(),
+      loadCompany(ctx),
+      decimalsOf(r.currency_code),
+      loadSettings(ctx.companyId),
+    ]);
+    if (al.error) throw al.error;
+    const s = cfg.settings;
+    const ask = await askExtras(s, false);
+    if (!ask) return;
+    const p = party.data || {};
+    const cur = esc(r.currency_code);
+    const onAccount = Number(r.amount) - Number(r.allocated_amount);
+    // Supplier bills: show their invoice number first, ours underneath.
+    const docNo = (doc) => (kind === 'payment' && doc.supplier_ref
+      ? `${esc(doc.supplier_ref)}<div class="muted">${esc(doc.doc_no)}</div>` : esc(doc.doc_no));
+    const rows = al.data.map((a, i) => {
+      const doc = a.doc || {};
+      return `<tr><td>${i + 1}</td><td>${docNo(doc)}</td><td>${esc(doc.doc_date || '')}</td>
+        <td class="n">${doc.gross_total !== undefined ? money(doc.gross_total, dec) : ''}</td><td class="n">${money(a.amount, dec)}</td></tr>`;
+    }).join('');
+    const accountRow = onAccount >= 0.005
+      ? `<tr><td></td><td colspan="3">On account</td><td class="n">${money(onAccount, dec)}</td></tr>` : '';
+    const body = `${header(co.row, k.title, [
+      [k.noLabel, r[k.noKey]], ['Date', r[k.dateKey]], ['Reference', r.reference], ...ask.extras,
+    ])}
+      <div class="parties"><div><div class="muted">${k.partyLabel}</div><strong>${esc(p.name || '')}</strong>
+        ${p.code ? `<div class="muted">${esc(p.code)}</div>` : ''}<div>${detailHtml(p)}</div></div>
+        <div><div class="muted">${k.amountLabel}</div><div class="amount">${money(r.amount, dec)} ${cur}</div>
+        ${r.status === 'reversed' ? `<span class="paid void">REVERSED${r.reversed_on ? ` ${esc(r.reversed_on)}` : ''}</span>` : ''}</div></div>
+      ${greetingHtml(s, p.name)}
+      <table class="lines"><thead><tr><th>#</th><th>${k.docCol}</th><th>Date</th><th class="n">Invoice total</th><th class="n">Amount applied</th></tr></thead>
+        <tbody>${rows || accountRow ? rows + accountRow : '<tr><td colspan="5" class="muted">Not allocated to any invoice.</td></tr>'}</tbody></table>
+      <table class="tot"><tr class="grand"><td>Total (${cur})</td><td class="n">${money(r.amount, dec)}</td></tr></table>
+      ${r.notes ? `<div class="note"><strong>Notes</strong><br>${nl(r.notes)}</div>` : ''}
+      ${endHtml(co.row, s.closing && s.closing.trim() ? s : { ...s, closing: k.note })}`;
+    await printHtml(`${k.title} ${r[k.noKey] || ''}`, body, s);
   } catch (e) { ui.errorFrom(e, 'Could not prepare the document for printing.'); }
 }
 
@@ -378,7 +456,7 @@ export async function printStatement(ctx, opts) {
         ${party.code ? `<div class="muted">${esc(party.code)}</div>` : ''}<div>${detailHtml(party)}</div></div>
         <div><div class="muted">Balance</div><div style="font-size:16px"><strong>${due || '0.00'}</strong></div>
         <div class="muted">Brackets are credit balances.</div></div></div>
-      ${greetingHtml(s, party.name)}${blocks || '<p class="muted">No activity in this period.</p>'}${items}${closingHtml(s)}${opts.partyTable === 'customers' ? bankHtml(bankFor(cfg.banks, opts.base)) : ''}${footer(co.row, s)}`;
+      ${greetingHtml(s, party.name)}${blocks || '<p class="muted">No activity in this period.</p>'}${items}${opts.partyTable === 'customers' ? bankHtml(bankFor(cfg.banks, opts.base)) : ''}${endHtml(co.row, s)}`;
     await printHtml(`${opts.title || 'Statement'} ${party.code || ''}`, body, s);
   } catch (e) { ui.errorFrom(e, 'Could not prepare the statement for printing.'); }
 }
