@@ -94,6 +94,7 @@ const NAV = [
     { href: '/pages/receipts.html', label: 'Receipts' },
     { href: '/pages/customer-statement.html', label: 'Customer Statement' },
     { href: '/pages/debtors-ageing.html', label: 'Debtors Ageing' },
+    { href: '/pages/interest.html', label: 'Interest' },
     { href: '/pages/customers.html', label: 'Customers' },
   ] },
   { section: 'Purchases', items: [

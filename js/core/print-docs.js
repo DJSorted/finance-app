@@ -467,7 +467,7 @@ export async function printStatement(ctx, opts) {
       <div class="parties"><div><div class="muted">Account</div><strong>${esc(party.name || '')}</strong>
         ${party.code ? `<div class="muted">${esc(party.code)}</div>` : ''}<div>${detailHtml(party)}</div></div>
         <div><div class="muted">Balance</div><div style="font-size:16px"><strong>${due || '0.00'}</strong></div>
-        <div class="muted">Brackets are credit balances.</div></div></div>
+        <div class="muted">${esc(opts.balanceNote || 'Brackets are credit balances.')}</div></div></div>
       ${greetingHtml(s, party.name)}${blocks || '<p class="muted">No activity in this period.</p>'}${items}${opts.partyTable === 'customers' ? bankHtml(bankFor(cfg.banks, opts.base)) : ''}${endHtml(co.row, s)}`;
     await printHtml(`${opts.title || 'Statement'} ${party.code || ''}`, body, s);
   } catch (e) { ui.errorFrom(e, 'Could not prepare the statement for printing.'); }

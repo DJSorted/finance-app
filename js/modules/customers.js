@@ -7,7 +7,7 @@ if (ctx) {
   await setupPage(ctx, {
     table: 'customers', noun: 'Customer', plural: 'customers', file: 'customers', search: true,
     hint: 'Anything left blank falls back to the company default. Leave the code blank on a new customer to number it automatically.',
-    defaults: { is_active: true },
+    defaults: { is_active: true, interest_mode: 'default' },
     duplicateMessage: 'That customer code already exists.',
 
     lookups: async (c) => {
@@ -61,6 +61,10 @@ if (ctx) {
           options: [{ value: '', label: 'Company default' }].concat(lk.accounts.map((a) => ({ value: a.id, label: `${a.code} - ${a.name}` }))),
           hint: 'Only posting accounts with control type Debtors are listed.' },
         { name: 'credit_limit', label: `Credit limit (${base})`, type: 'number' },
+        { name: 'interest_mode', label: 'Interest on overdue invoices', type: 'select',
+          options: [{ value: 'default', label: 'Company rate' }, { value: 'custom', label: 'Own rate' }, { value: 'none', label: 'No interest' }],
+          hint: 'The company rate and grace days are set on Company Defaults.' },
+        { name: 'interest_rate', label: 'Own interest rate (% a year)', type: 'number', hint: 'Only used when set to Own rate.' },
         { name: 'notes', label: 'Notes', type: 'textarea', full: true },
         { name: 'is_active', label: 'Active', type: 'checkbox' },
       ];
@@ -69,6 +73,8 @@ if (ctx) {
     validate: (v) => {
       if (v.credit_limit !== null && v.credit_limit < 0) throw new Error('The credit limit cannot be negative.');
       if (v.email && !/^\S+@\S+\.\S+$/.test(v.email)) throw new Error('Enter a valid email address.');
+      if (v.interest_rate !== null && v.interest_rate < 0) throw new Error('The interest rate cannot be negative.');
+      if (v.interest_mode === 'custom' && !(v.interest_rate > 0)) throw new Error('Enter the customer\'s own interest rate.');
     },
 
     toPayload: (v) => ({
@@ -77,6 +83,7 @@ if (ctx) {
       currency_code: v.currency_code || null, payment_terms_id: v.payment_terms_id || null,
       tax_code_id: v.tax_code_id || null, control_account_id: v.control_account_id || null,
       credit_limit: v.credit_limit, notes: v.notes || null, is_active: v.is_active,
+      interest_mode: v.interest_mode || 'default', interest_rate: v.interest_mode === 'custom' ? v.interest_rate : null,
     }),
   });
 }

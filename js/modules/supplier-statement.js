@@ -3,6 +3,7 @@ import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
 import { createAllocationGrid } from '../core/allocation-grid.js';
+import { printStatement } from '../core/print-docs.js';
 
 const ctx = await startPage();
 
@@ -21,6 +22,7 @@ let supId = new URLSearchParams(location.search).get('supplier') || '';
 let stmt = [];
 let openItems = [];
 let apps = [];
+let allocs = [];
 let ran = false;
 
 function el(tag, cls, text) {
@@ -77,7 +79,7 @@ async function init() {
   toolbar.append(supSel, el('span', 'muted', 'From'), fromEl, el('span', 'muted', 'To'), toEl,
     btn('Run', 'btn-primary', run));
   if (CAN_APPLY) toolbar.append(btn('Apply credits', '', openApply));
-  toolbar.append(el('span', 'spacer'), btn('Export to Excel', '', doExport));
+  toolbar.append(el('span', 'spacer'), btn('Print', '', printIt), btn('Export to Excel', '', doExport));
   hint.textContent = 'Balances are what we owe, in each document currency. Open items are at the To date, and base amounts are at the rate each document was booked.';
   if (supId) await run(); else panel.innerHTML = '<div class="card"><p class="muted">Choose a supplier to see their statement.</p></div>';
 }
@@ -95,8 +97,62 @@ async function run() {
   stmt = s.data;
   openItems = o.data;
   apps = a.data;
+  allocs = await loadAllocations();
   ran = true;
   render();
+}
+
+// Payment allocations touching the open bills and open payments, as they stood at the To date.
+// Only adds detail to the balance breakdown, so a failure leaves it out rather than stopping the statement.
+async function loadAllocations() {
+  const bills = openItems.filter((i) => i.doc_kind === 'bill').map((i) => i.doc_id);
+  const pays = openItems.filter((i) => i.doc_kind === 'payment').map((i) => i.doc_id);
+  if (!bills.length && !pays.length) return [];
+  const or = [bills.length ? `bill_id.in.(${bills.join(',')})` : '', pays.length ? `payment_id.in.(${pays.join(',')})` : ''].filter(Boolean).join(',');
+  const { data, error } = await supabase.from('purchase_allocations')
+    .select('payment_id, bill_id, amount, payment:supplier_payments(payment_no, payment_date, status, reversed_on), bill:purchase_documents!purchase_allocations_bill_id_fkey(doc_no, supplier_ref)')
+    .or(or);
+  if (error) return [];
+  const to = toEl.value;
+  return data.filter((a) => a.payment && a.payment.payment_date <= to
+    && !(a.payment.status === 'reversed' && a.payment.reversed_on && a.payment.reversed_on <= to));
+}
+
+/* The balance by source document: each open item with its original amount, what has been paid or applied
+   against it (payments named individually) and what is left. Per currency, the outstanding amounts make up what we owe. */
+function balanceBlocks() {
+  const byCur = new Map();
+  openItems.forEach((i) => {
+    const dec = decOf(i.currency_code);
+    const outstanding = Number(i.outstanding);
+    const original = (outstanding < 0 ? -1 : 1) * Math.abs(Number(i.original));
+    const applied = roundTo(outstanding - original, dec);
+    const detail = [];
+    if (i.doc_kind === 'bill' || i.doc_kind === 'payment') {
+      const isBill = i.doc_kind === 'bill';
+      allocs.filter((a) => (isBill ? a.bill_id : a.payment_id) === i.doc_id).forEach((a) => {
+        const billNo = a.bill ? [a.bill.doc_no, a.bill.supplier_ref].filter(Boolean).join(' · ') : '';
+        detail.push(isBill
+          ? { text: `Payment ${a.payment.payment_no || ''} on ${a.payment.payment_date}`, amount: -Number(a.amount) }
+          : { text: `Applied to bill ${billNo}`, amount: Number(a.amount) });
+      });
+      const rest = roundTo(applied - detail.reduce((s, x) => s + x.amount, 0), dec);
+      if (detail.length && Math.abs(rest) >= 0.005) {
+        detail.push({ text: isBill ? 'Credit notes and other credits applied' : 'Other applications', amount: rest });
+      }
+    }
+    if (!byCur.has(i.currency_code)) byCur.set(i.currency_code, { cur: i.currency_code, dec, items: [], total: 0 });
+    const b = byCur.get(i.currency_code);
+    b.items.push({ src: i, type: OPEN_KIND[i.doc_kind] || i.doc_kind, no: i.doc_no || '', sref: i.supplier_ref || '', date: i.doc_date,
+      due: i.doc_kind === 'bill' ? i.due_date : '', original, applied, outstanding, detail });
+    b.total += outstanding;
+  });
+  const blocks = [...byCur.values()].sort((a, b) => a.cur.localeCompare(b.cur));
+  blocks.forEach((b) => {
+    b.total = roundTo(b.total, b.dec);
+    b.items.sort((x, y) => x.date.localeCompare(y.date) || x.no.localeCompare(y.no));
+  });
+  return blocks;
 }
 
 /* ---------- render ---------- */
@@ -144,24 +200,26 @@ function render() {
       <tr class="row-root"><td colspan="7">Closing balance at ${esc(toEl.value)}</td><td class="num">${fmt(b.closing, b.dec) || '0.00'}</td><td></td></tr></tbody></table></div></div>`;
   });
 
-  // open items
+  // balance by source document (the open items, with what was paid or applied against each)
+  const balBlocks = balanceBlocks();
   const baseTotal = openItems.reduce((s, i) => s + Number(i.base_outstanding), 0);
-  const oiBody = openItems.map((i) => {
-    const d = decOf(i.currency_code);
+  const oiBody = balBlocks.map((b) => b.items.map((x) => {
+    const i = x.src;
     const over = i.doc_kind === 'bill' ? Math.round((new Date(`${toEl.value}T00:00:00Z`) - new Date(`${i.due_date}T00:00:00Z`)) / 86400000) : '';
-    return `<tr><td>${esc(OPEN_KIND[i.doc_kind] || i.doc_kind)}</td><td>${esc(i.doc_no || '')}</td><td>${esc(i.supplier_ref || '')}</td>
-      <td>${i.doc_date}</td><td>${i.doc_kind === 'bill' ? i.due_date : ''}</td><td>${esc(i.currency_code)}</td>
-      <td class="num">${fmt(Number(i.original), d)}</td><td class="num">${fmt(Number(i.outstanding), d)}</td>
+    return `<tr><td>${esc(x.type)}</td><td>${esc(x.no)}</td><td>${esc(x.sref)}</td><td>${x.date}</td><td>${x.due || ''}</td><td>${esc(b.cur)}</td>
+      <td class="num">${fmt(x.original, b.dec)}</td><td class="num">${fmt(x.applied, b.dec)}</td><td class="num">${fmt(x.outstanding, b.dec)}</td>
       <td class="num">${fmt(Number(i.base_outstanding))}</td>
-      <td class="num">${over !== '' && over > 0 ? over : ''}</td></tr>`;
-  }).join('');
-  html += `<div class="card" style="margin-bottom:1rem"><h3>Open items at ${esc(toEl.value)}</h3>
+      <td class="num">${over !== '' && over > 0 ? over : ''}</td></tr>
+      ${x.detail.map((d) => `<tr><td></td><td colspan="6" class="muted" style="padding-left:1.5rem">${esc(d.text)}</td>
+        <td class="num muted">${fmt(d.amount, b.dec)}</td><td colspan="3"></td></tr>`).join('')}`;
+  }).join('') + `<tr class="row-parent"><td colspan="8">Owed (${esc(b.cur)})</td><td class="num">${fmt(b.total, b.dec) || '0.00'}</td><td colspan="2"></td></tr>`).join('');
+  html += `<div class="card" style="margin-bottom:1rem"><h3>Balance by document at ${esc(toEl.value)}</h3>
     ${openItems.length ? `<div class="table-wrap"><table class="grid"><thead><tr><th>Type</th><th>No</th><th>Supplier ref</th><th>Date</th><th>Due</th><th>Cur</th>
-      <th style="text-align:right">Original</th><th style="text-align:right">Outstanding</th>
+      <th style="text-align:right">Original</th><th style="text-align:right">Paid / applied</th><th style="text-align:right">Outstanding</th>
       <th style="text-align:right">${esc(base)}</th><th style="text-align:right">Days overdue</th></tr></thead>
-      <tbody>${oiBody}<tr class="row-root"><td colspan="8">Total owed (${esc(base)})</td><td class="num">${fmt(baseTotal) || '0.00'}</td><td></td></tr></tbody></table></div>`
+      <tbody>${oiBody}<tr class="row-root"><td colspan="9">Total owed (${esc(base)})</td><td class="num">${fmt(baseTotal) || '0.00'}</td><td></td></tr></tbody></table></div>`
     : '<p class="muted">Nothing outstanding.</p>'}
-    <p class="muted">Journal items can be matched against bills and credits with Apply credits. Brackets are amounts owed to us.</p></div>`;
+    <p class="muted">Original + paid / applied = outstanding; the outstanding amounts make up what we owe in each currency. Journal items can be matched against bills and credits with Apply credits. Brackets are amounts owed to us.</p></div>`;
 
   // applications
   const appBody = apps.map((a) => `<tr data-app="${a.id}"><td>${a.app_date}</td><td>${esc(a.currency_code)}</td>
@@ -308,6 +366,27 @@ async function openApply() {
   });
 }
 
+// Our number with the supplier's reference after it, for the printed tables.
+const withRef = (no, sref) => [no, sref].filter(Boolean).join(' · ');
+
+async function printIt() {
+  if (!ran) return ui.warn('Run the statement first.');
+  await printStatement(ctx, {
+    title: 'Supplier statement', partyTable: 'suppliers', partyId: supId, from: fromEl.value, to: toEl.value,
+    headers: { debit: 'Charges', credit: 'Credits', balance: 'Owed' },
+    balanceNote: 'What we owe. Brackets are amounts owed to us.',
+    blocks: statementBlocks().map((b) => ({
+      cur: b.cur, dec: b.dec, opening: b.opening, closing: b.closing,
+      lines: b.lines.map((r) => ({ date: r.tx_date, type: KIND[r.kind] || r.kind, no: withRef(r.doc_no, r.supplier_ref), ref: r.reference || '',
+        debit: Number(r.charges), credit: Number(r.credits), balance: r.balance })),
+    })),
+    openItems: [],
+    breakdown: balanceBlocks().map(({ cur, dec, total, items }) => ({
+      cur, dec, total, items: items.map(({ src, sref, ...x }) => ({ ...x, no: withRef(x.no, sref) })),
+    })),
+  });
+}
+
 /* ---------- export ---------- */
 
 async function doExport() {
@@ -330,14 +409,15 @@ async function doExport() {
         { key: 'sref', header: 'Supplier ref', width: 18 }, { key: 'ref', header: 'Reference', width: 18 },
         { key: 'charges', header: 'Charges', width: 14 }, { key: 'credits', header: 'Credits', width: 14 },
         { key: 'balance', header: 'Owed', width: 16 }, { key: 'base', header: `At booked rate (${base})`, width: 20 } ] },
-      { name: 'Open items', rows: openItems.map((i) => ({
-        type: OPEN_KIND[i.doc_kind] || i.doc_kind, no: i.doc_no || '', sref: i.supplier_ref || '', date: i.doc_date,
-        due: i.doc_kind === 'bill' ? i.due_date : '', cur: i.currency_code, original: Number(i.original),
-        outstanding: Number(i.outstanding), base: Number(i.base_outstanding),
-      })), columns: [
-        { key: 'type', header: 'Type', width: 22 }, { key: 'no', header: 'No', width: 14 }, { key: 'sref', header: 'Supplier ref', width: 18 },
+      { name: 'Balance by document', rows: balanceBlocks().flatMap((b) => b.items.flatMap((x) => [{
+        type: x.type, no: x.no, sref: x.sref, date: x.date, due: x.due, cur: b.cur, original: x.original, applied: x.applied,
+        outstanding: x.outstanding, base: Number(x.src.base_outstanding),
+      }, ...x.detail.map((d) => ({ type: '', no: `  ${d.text}`, sref: '', date: '', due: '', cur: b.cur, original: '', applied: d.amount, outstanding: '', base: '' }))])),
+      columns: [
+        { key: 'type', header: 'Type', width: 22 }, { key: 'no', header: 'No', width: 30 }, { key: 'sref', header: 'Supplier ref', width: 18 },
         { key: 'date', header: 'Date', width: 12 }, { key: 'due', header: 'Due', width: 12 }, { key: 'cur', header: 'Currency', width: 10 },
-        { key: 'original', header: 'Original', width: 14 }, { key: 'outstanding', header: 'Outstanding', width: 14 },
+        { key: 'original', header: 'Original', width: 14 }, { key: 'applied', header: 'Paid / applied', width: 14 },
+        { key: 'outstanding', header: 'Outstanding', width: 14 },
         { key: 'base', header: `Outstanding (${base})`, width: 18 } ] },
     ]);
   } catch (e) { ui.errorFrom(e, 'Could not export.'); }
