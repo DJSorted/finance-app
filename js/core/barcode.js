@@ -421,8 +421,10 @@ export async function printLabels(entries, { priceText = () => '' } = {}) {
     if (!svgCache.has(value)) svgCache.set(value, barcodeSvg(JsBarcode, value));
     const price = opts.price ? priceText(item, opts.inclTax) : '';
     const foot = [opts.code ? `<span>${esc(item.code)}</span>` : '', price ? `<b>${esc(price)}</b>` : ''].filter(Boolean).join('');
+    // Digit size in mm: grows with label height, but never wider than the label allows for this many characters
+    const dgSize = Math.max(2.2, Math.min(L.h * 0.15, 6, (L.w - 4) / (value.length * 0.68)));
     return `${opts.name ? `<div class="nm">${esc(item.name)}</div>` : ''}<div class="bc">${svgCache.get(value)}</div>`
-      + `${opts.digits ? `<div class="dg">${esc(value)}</div>` : ''}${foot ? `<div class="ft">${foot}</div>` : ''}`;
+      + `${opts.digits ? `<div class="dg" style="font-size:${dgSize.toFixed(2)}mm">${esc(value)}</div>` : ''}${foot ? `<div class="ft">${foot}</div>` : ''}`;
   };
   const labels = [];
   entries.forEach(({ item, qty }) => { for (let i = 0; i < qty; i += 1) labels.push(one(item)); });
@@ -458,7 +460,7 @@ export async function printLabels(entries, { priceText = () => '' } = {}) {
     .nm{font-weight:bold;max-height:2.3em;overflow:hidden;text-align:center;margin-bottom:.4mm}
     .bc{flex:1 1 auto;min-height:0}
     .bc svg{width:100%;height:100%;display:block}
-    .dg{text-align:center;font-family:monospace;letter-spacing:.06em;font-size:.9em}
+    .dg{text-align:center;font-family:monospace;font-weight:bold;letter-spacing:.06em;line-height:1.1;white-space:nowrap}
     .ft{display:flex;justify-content:space-between;gap:1mm;white-space:nowrap}
     .ft b:only-child{margin-left:auto;margin-right:auto}`;
 
