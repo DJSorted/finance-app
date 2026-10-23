@@ -126,7 +126,8 @@ begin
         'doc_date', 'due_date', 'reference', 'currency_code', 'fx_rate', 'net_total', 'tax_total', 'gross_total', 'notes', 'status'])),
       'lines', coalesce((select jsonb_agg(jsonb_build_object('description', l.description, 'quantity', l.quantity,
           'unit_price', l.unit_price, 'tax_rate', l.tax_rate, 'net_amount', l.net_amount, 'tax_amount', l.tax_amount,
-          'items', case when i.id is null then null else jsonb_build_object('code', i.code) end) order by l.line_no)
+          'items', case when i.id is null then null
+            else jsonb_build_object('code', i.code, 'name', i.name, 'description', i.description) end) order by l.line_no)
         from public.sales_document_lines l left join public.items i on i.id = l.item_id
         where l.document_id = v_doc.id), '[]'::jsonb),
       'terms', (select name from public.payment_terms where id = v_doc.payment_terms_id),

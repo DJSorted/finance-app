@@ -205,6 +205,17 @@ function footer(company, s = DEFAULT_SETTINGS) {
 
 /* ---------- invoice and credit note ---------- */
 
+// A line's description cell: the item name, with the description underneath in small grey text.
+// The description is the line's own text when it was changed from the item name, else the item's description.
+// Lines without an item print just their text.
+function lineText(x) {
+  const it = x.items || {};
+  const own = String(x.description || '').trim();
+  const name = String(it.name || '').trim() || own;
+  const sub = own && own !== name ? own : String(it.description || '').trim();
+  return `${esc(name)}${sub && sub !== name ? `<div class="muted" style="font-size:10.5px">${nl(sub)}</div>` : ''}`;
+}
+
 // outstanding: amount still owed on a posted invoice (null when unknown, e.g. a draft); paid = gross - outstanding.
 function salesBody({ company, base, d, lines, dec, customer, termsName, s, bank, extras = [], projectText = '', outstanding = null }) {
   const isInv = d.doc_type === 'invoice';
@@ -212,7 +223,7 @@ function salesBody({ company, base, d, lines, dec, customer, termsName, s, bank,
   const title = `${hasTax ? 'Tax ' : ''}${isInv ? 'invoice' : 'credit note'}`.replace(/^./, (c) => c.toUpperCase());
 
   const rows = lines.map((x, i) => `<tr><td>${i + 1}</td>
-      <td>${esc(x.description)}${x.items && x.items.code ? `<div class="muted">${esc(x.items.code)}</div>` : ''}</td>
+      <td>${lineText(x)}</td>
       <td class="n">${qty(x.quantity)}</td><td class="n">${money(x.unit_price, dec)}</td>
       ${hasTax ? `<td class="n">${Number(x.tax_rate) ? `${Number(x.tax_rate)}%` : ''}</td>` : ''}
       <td class="n">${money(x.net_amount, dec)}</td></tr>`).join('');
@@ -273,8 +284,9 @@ export async function sampleDocumentHtml(ctx, settings, banks = []) {
   const co = await loadCompany(ctx);
   const cur = co.base || 'ZAR';
   const lines = [
-    { description: 'Consulting services', items: { code: 'SVC-01' }, quantity: 10, unit_price: 850, tax_rate: 15, net_amount: 8500, tax_amount: 1275 },
-    { description: 'Widget, large', items: { code: 'WID-L' }, quantity: 4, unit_price: 312.5, tax_rate: 15, net_amount: 1250, tax_amount: 187.5 },
+    { description: 'Consulting services', items: { code: 'SVC-01', name: 'Consulting services', description: 'Strategy workshop and follow-up report' },
+      quantity: 10, unit_price: 850, tax_rate: 15, net_amount: 8500, tax_amount: 1275 },
+    { description: 'Widget, large', items: { code: 'WID-L', name: 'Widget, large', description: '' }, quantity: 4, unit_price: 312.5, tax_rate: 15, net_amount: 1250, tax_amount: 187.5 },
   ];
   const d = {
     doc_type: 'invoice', doc_no: 'INV-0001', doc_date: new Date().toISOString().slice(0, 10), due_date: '', reference: 'PO 12345',
@@ -291,7 +303,7 @@ export async function sampleDocumentHtml(ctx, settings, banks = []) {
 export async function printSalesDocument(ctx, d) {
   try {
     const [l, cust, co, dec, terms, cfg] = await Promise.all([
-      supabase.from('sales_document_lines').select('*, items(code)').eq('document_id', d.id).order('line_no'),
+      supabase.from('sales_document_lines').select('*, items(code, name, description)').eq('document_id', d.id).order('line_no'),
       supabase.from('customers').select('*').eq('id', d.customer_id).maybeSingle(),
       loadCompany(ctx),
       decimalsOf(d.currency_code),
