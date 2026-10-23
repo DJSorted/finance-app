@@ -5,6 +5,7 @@ import { exportSheets } from '../core/export.js';
 import { createAllocationGrid } from '../core/allocation-grid.js';
 import { openAttachmentsDialog, clipCell, clipHead, fillClips } from '../core/attachments.js';
 import { printMoneyDocument } from '../core/print-docs.js';
+import { openShareDialog } from '../core/share-link.js';
 
 const ctx = await startPage();
 
@@ -380,10 +381,15 @@ async function openViewer(r) {
 
   const buttons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }, { label: 'Attachments', value: 'attach', className: 'btn-ghost' },
     { label: 'Print', value: 'print', className: 'btn-ghost' }];
+  if (CAN_ADD) buttons.push({ label: 'Share link', value: 'share', className: 'btn-ghost' });
   if (CAN_RATE && r.status === 'posted') buttons.push({ label: 'Reverse', value: 'reverse', className: 'btn-danger' });
   const res = await ui.dialog({ title: `Receipt ${r.receipt_no}`, node, buttons, dismissValue: 'close', wide: true });
   if (res === 'print') {
     await printMoneyDocument(ctx, 'receipt', r);
+    await openViewer(r);
+  } else if (res === 'share') {
+    await openShareDialog(ctx, { kind: 'receipt', doc: r, label: 'Receipt', docNo: r.receipt_no,
+      amountText: `${r.currency_code} ${money(r.amount, dec)}`, intro: 'Thank you for your payment.' });
     await openViewer(r);
   } else if (res === 'attach') {
     await openAttachmentsDialog(ctx, { table: 'customer_receipts', recordId: r.id, title: `Attachments: Receipt ${r.receipt_no}` });

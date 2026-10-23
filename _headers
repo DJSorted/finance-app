@@ -2,3 +2,7 @@
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
+
+# Shared document links: keep out of search engines.
+/pages/shared*
+  X-Robots-Tag: noindex, nofollow

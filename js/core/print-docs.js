@@ -71,7 +71,8 @@ function templateCss(s) {
     table.tot tr.grand td{border-top-color:${a}}.parties>div{border-color:${a}55}`;
 }
 
-function docHtml(title, body, s = DEFAULT_SETTINGS) {
+// extraCss: added after the print styles (the shared link page uses it for the on-screen layout).
+function docHtml(title, body, s = DEFAULT_SETTINGS, extraCss = '') {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>
       @page{size:A4;margin:14mm}
       body{font:12px/1.45 Arial,sans-serif;color:#111;margin:0}
@@ -104,12 +105,13 @@ function docHtml(title, body, s = DEFAULT_SETTINGS) {
       .foot{margin-top:26px;border-top:1px solid #ccc;padding-top:8px;color:#444;font-size:11px}
       .sign{display:flex;gap:40px;margin-top:48px}.sign div{flex:1;border-top:1px solid #000;padding-top:4px}
       ${templateCss(s)}
+      ${extraCss}
       </style></head><body><div class="page">${body}</div></body></html>`;
 }
 
-// Asks for the extra field values (and whether to show the project) before printing.
+// Asks for the extra field values (and whether to show the project) before printing or sharing.
 // Resolves null when cancelled.
-async function askExtras(s, withProject) {
+async function askExtras(s, withProject, action = 'Print') {
   const labels = [s.extra1_label, s.extra2_label].map((x) => (x || '').trim());
   if (!labels[0] && !labels[1] && !withProject) return { extras: [], project: false };
   const node = document.createElement('div');
@@ -138,8 +140,8 @@ async function askExtras(s, withProject) {
     w.append(proj, lab);
     node.append(w);
   }
-  const res = await ui.dialog({ title: 'Print', node, dismissValue: false,
-    buttons: [{ label: 'Cancel', value: false, className: 'btn-ghost' }, { label: 'Print', value: true, className: 'btn-primary' }] });
+  const res = await ui.dialog({ title: action, node, dismissValue: false,
+    buttons: [{ label: 'Cancel', value: false, className: 'btn-ghost' }, { label: action, value: true, className: 'btn-primary' }] });
   if (!res) return null;
   return {
     extras: labels.map((l, i) => [l, inputs[i] ? inputs[i].value.trim() : '']).filter(([l, v]) => l && v),
@@ -366,62 +368,138 @@ const MONEY_DOCS = {
   receipt: {
     title: 'Receipt', noLabel: 'Receipt no', partyLabel: 'Received from', amountLabel: 'Amount received',
     partyTable: 'customers', partyKey: 'customer_id', noKey: 'receipt_no', dateKey: 'receipt_date',
-    allocTable: 'sales_allocations', allocKey: 'receipt_id', docCol: 'Invoice',
+    allocTable: 'sales_allocations', allocKey: 'receipt_id', docCol: 'Invoice', bankLabel: 'Received into',
     join: 'doc:sales_documents!sales_allocations_invoice_id_fkey(*)',
     note: 'Thank you for your payment.',
   },
   payment: {
     title: 'Payment advice', noLabel: 'Payment no', partyLabel: 'Paid to', amountLabel: 'Amount paid',
     partyTable: 'suppliers', partyKey: 'supplier_id', noKey: 'payment_no', dateKey: 'payment_date',
-    allocTable: 'purchase_allocations', allocKey: 'payment_id', docCol: 'Your invoice',
+    allocTable: 'purchase_allocations', allocKey: 'payment_id', docCol: 'Your invoice', bankLabel: 'Paid from',
     join: 'doc:purchase_documents!purchase_allocations_bill_id_fkey(*)',
     note: 'Please allocate this payment against the invoices listed.',
   },
 };
 
+// bankName: name of the bank or cash account the money went into (or came out of), '' when unknown.
+function moneyBody({ kind, company, base, r, allocs, party, dec, s, extras = [], bankName = '' }) {
+  const k = MONEY_DOCS[kind];
+  const p = party || {};
+  const cur = esc(r.currency_code);
+  const onAccount = Number(r.amount) - Number(r.allocated_amount);
+  // Supplier bills: show their invoice number first, ours underneath.
+  const docNo = (doc) => (kind === 'payment' && doc.supplier_ref
+    ? `${esc(doc.supplier_ref)}<div class="muted">${esc(doc.doc_no)}</div>` : esc(doc.doc_no));
+  const rows = allocs.map((a, i) => {
+    const doc = a.doc || {};
+    return `<tr><td>${i + 1}</td><td>${docNo(doc)}</td><td>${esc(doc.doc_date || '')}</td>
+      <td class="n">${doc.gross_total !== undefined && doc.gross_total !== null ? money(doc.gross_total, dec) : ''}</td><td class="n">${money(a.amount, dec)}</td></tr>`;
+  }).join('');
+  const accountRow = onAccount >= 0.005
+    ? `<tr><td></td><td colspan="3">On account</td><td class="n">${money(onAccount, dec)}</td></tr>` : '';
+  // Payment details: whichever of these are known.
+  const foreign = base && r.currency_code !== base && Number(r.fx_rate) > 0;
+  const details = [
+    [k.bankLabel, bankName],
+    ['Reference', r.reference],
+    ['Exchange rate', foreign ? `1 ${r.currency_code} = ${Number(r.fx_rate).toFixed(4)} ${base}` : ''],
+  ].filter(([, v]) => v && String(v).trim());
+  const detailRows = details.length
+    ? `<table class="meta" style="margin-top:8px">${details.map(([l, v]) =>
+      `<tr><td class="muted" style="padding-right:10px">${esc(l)}</td><td><strong>${esc(v)}</strong></td></tr>`).join('')}</table>` : '';
+  const body = `${header(company, k.title, [
+    [k.noLabel, r[k.noKey]], ['Date', r[k.dateKey]], ...extras,
+  ])}
+    <div class="parties"><div><div class="muted">${k.partyLabel}</div><strong>${esc(p.name || '')}</strong>
+      ${p.code ? `<div class="muted">${esc(p.code)}</div>` : ''}<div>${detailHtml(p)}</div></div>
+      <div><div class="muted">${k.amountLabel}</div><div class="amount">${money(r.amount, dec)} ${cur}</div>
+      ${detailRows}
+      ${r.status === 'reversed' ? `<span class="paid void">REVERSED${r.reversed_on ? ` ${esc(r.reversed_on)}` : ''}</span>` : ''}</div></div>
+    ${greetingHtml(s, p.name)}
+    <table class="lines"><thead><tr><th>#</th><th>${k.docCol}</th><th>Date</th><th class="n">Invoice total</th><th class="n">Amount applied</th></tr></thead>
+      <tbody>${rows || accountRow ? rows + accountRow : '<tr><td colspan="5" class="muted">Not allocated to any invoice.</td></tr>'}</tbody></table>
+    <table class="tot"><tr class="grand"><td>Total (${cur})</td><td class="n">${money(r.amount, dec)}</td></tr></table>
+    ${r.notes ? `<div class="note"><strong>Notes</strong><br>${nl(r.notes)}</div>` : ''}
+    ${endHtml(company, s.closing && s.closing.trim() ? s : { ...s, closing: k.note })}`;
+  return { title: k.title, body };
+}
+
 // kind: 'receipt' (customer_receipts row) or 'payment' (supplier_payments row).
 export async function printMoneyDocument(ctx, kind, r) {
   const k = MONEY_DOCS[kind];
   try {
-    const [al, party, co, dec, cfg] = await Promise.all([
+    const [al, party, co, dec, cfg, bk] = await Promise.all([
       supabase.from(k.allocTable).select(`*, ${k.join}`).eq(k.allocKey, r.id).order('created_at'),
       supabase.from(k.partyTable).select('*').eq('id', r[k.partyKey]).maybeSingle(),
       loadCompany(ctx),
       decimalsOf(r.currency_code),
       loadSettings(ctx.companyId),
+      r.bank_account_id ? supabase.from('gl_accounts').select('name').eq('id', r.bank_account_id).maybeSingle() : Promise.resolve({ data: null }),
     ]);
     if (al.error) throw al.error;
     const s = cfg.settings;
     const ask = await askExtras(s, false);
     if (!ask) return;
-    const p = party.data || {};
-    const cur = esc(r.currency_code);
-    const onAccount = Number(r.amount) - Number(r.allocated_amount);
-    // Supplier bills: show their invoice number first, ours underneath.
-    const docNo = (doc) => (kind === 'payment' && doc.supplier_ref
-      ? `${esc(doc.supplier_ref)}<div class="muted">${esc(doc.doc_no)}</div>` : esc(doc.doc_no));
-    const rows = al.data.map((a, i) => {
-      const doc = a.doc || {};
-      return `<tr><td>${i + 1}</td><td>${docNo(doc)}</td><td>${esc(doc.doc_date || '')}</td>
-        <td class="n">${doc.gross_total !== undefined ? money(doc.gross_total, dec) : ''}</td><td class="n">${money(a.amount, dec)}</td></tr>`;
-    }).join('');
-    const accountRow = onAccount >= 0.005
-      ? `<tr><td></td><td colspan="3">On account</td><td class="n">${money(onAccount, dec)}</td></tr>` : '';
-    const body = `${header(co.row, k.title, [
-      [k.noLabel, r[k.noKey]], ['Date', r[k.dateKey]], ['Reference', r.reference], ...ask.extras,
-    ])}
-      <div class="parties"><div><div class="muted">${k.partyLabel}</div><strong>${esc(p.name || '')}</strong>
-        ${p.code ? `<div class="muted">${esc(p.code)}</div>` : ''}<div>${detailHtml(p)}</div></div>
-        <div><div class="muted">${k.amountLabel}</div><div class="amount">${money(r.amount, dec)} ${cur}</div>
-        ${r.status === 'reversed' ? `<span class="paid void">REVERSED${r.reversed_on ? ` ${esc(r.reversed_on)}` : ''}</span>` : ''}</div></div>
-      ${greetingHtml(s, p.name)}
-      <table class="lines"><thead><tr><th>#</th><th>${k.docCol}</th><th>Date</th><th class="n">Invoice total</th><th class="n">Amount applied</th></tr></thead>
-        <tbody>${rows || accountRow ? rows + accountRow : '<tr><td colspan="5" class="muted">Not allocated to any invoice.</td></tr>'}</tbody></table>
-      <table class="tot"><tr class="grand"><td>Total (${cur})</td><td class="n">${money(r.amount, dec)}</td></tr></table>
-      ${r.notes ? `<div class="note"><strong>Notes</strong><br>${nl(r.notes)}</div>` : ''}
-      ${endHtml(co.row, s.closing && s.closing.trim() ? s : { ...s, closing: k.note })}`;
-    await printHtml(`${k.title} ${r[k.noKey] || ''}`, body, s);
+    const { title, body } = moneyBody({
+      kind, company: co.row, base: co.base, r, allocs: al.data, party: party.data, dec, s, extras: ask.extras,
+      bankName: bk.data ? bk.data.name : '',
+    });
+    await printHtml(`${title} ${r[k.noKey] || ''}`, body, s);
   } catch (e) { ui.errorFrom(e, 'Could not prepare the document for printing.'); }
+}
+
+/* ---------- shared links (customers view a document in the browser) ---------- */
+
+// Asks for the same extras as printing, before a share link is made. kind: 'sales' or 'receipt'.
+// Resolves { extras, show_project } or null when cancelled.
+export async function askShareOptions(ctx, kind, doc) {
+  const cfg = await loadSettings(ctx.companyId);
+  let withProject = false;
+  if (kind === 'sales') {
+    const l = await supabase.from('sales_document_lines').select('project_id').eq('document_id', doc.id);
+    withProject = !l.error && l.data.some((x) => x.project_id);
+  }
+  const ask = await askExtras(cfg.settings, withProject, 'Create link');
+  return ask ? { extras: ask.extras, show_project: ask.project } : null;
+}
+
+// On screen the document sits on a sheet of paper; on a phone the columns stack. Printing is unchanged.
+const SHARED_CSS = `@media screen{
+  html{background:#e9ecef}body{padding:16px}
+  .page{background:#fff;max-width:210mm;min-height:0;margin:0 auto;padding:14mm;box-sizing:border-box;
+    box-shadow:0 2px 12px rgba(0,0,0,.15);border-radius:4px;overflow-x:auto}
+  .share-bar{max-width:210mm;margin:0 auto 12px;display:flex;justify-content:flex-end}
+  .share-bar button{font:600 14px Arial,sans-serif;padding:9px 16px;border:0;border-radius:6px;background:#1f5fbf;color:#fff;cursor:pointer}
+}
+@media screen and (max-width:640px){
+  body{padding:8px}.page{padding:16px}
+  .head,.parties{flex-direction:column;gap:12px}.head>div[style]{text-align:left!important}.head .meta{margin-left:0!important}
+  table.tot,.bank{width:100%}
+}
+@media print{.share-bar{display:none}}`;
+
+// Full HTML page for get_shared_document()'s result, with a Print / Save as PDF bar on top.
+export function sharedDocumentHtml(data) {
+  const s = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
+  const dec = data.decimals !== null && data.decimals !== undefined ? Number(data.decimals) : 2;
+  const extras = Array.isArray(data.extras) ? data.extras : [];
+  let doc;
+  if (data.kind === 'receipt') {
+    doc = moneyBody({
+      kind: 'receipt', company: data.company || {}, base: data.base, r: data.receipt, allocs: data.allocations || [],
+      party: data.customer, dec, s, extras, bankName: data.received_into || '',
+    });
+    doc.title = `${doc.title} ${data.receipt.receipt_no || ''}`;
+  } else {
+    doc = salesBody({
+      company: data.company || {}, base: data.base, d: data.doc, lines: data.lines || [], dec, customer: data.customer || {},
+      termsName: data.terms || '', s, bank: data.bank, extras, projectText: data.project || '',
+      outstanding: data.outstanding === null || data.outstanding === undefined ? null : Number(data.outstanding),
+    });
+    doc.title = `${doc.title} ${data.doc.doc_no || ''}`;
+  }
+  const bar = '<div class="share-bar"><button type="button" id="share-print">Print / Save as PDF</button></div>';
+  return docHtml(doc.title, doc.body, s, SHARED_CSS).replace('<body>', `<body>${bar}`);
 }
 
 /* ---------- statement of account ---------- */
