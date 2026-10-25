@@ -3,6 +3,13 @@
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
 
+# Installable app: always fetch the latest service worker
+/sw.js
+  Cache-Control: no-cache
+
+/manifest.webmanifest
+  Content-Type: application/manifest+json
+
 # Shared document links: keep out of search engines.
 /pages/shared*
   X-Robots-Tag: noindex, nofollow
