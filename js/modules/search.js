@@ -27,6 +27,7 @@ const PER = 8;
 
 const input = document.createElement('input');
 input.type = 'search';
+input.className = 'search-main';
 input.placeholder = 'Search numbers, names, references, notes, amounts, dates';
 input.style.minWidth = '320px';
 input.value = new URLSearchParams(location.search).get('q') || '';
@@ -39,10 +40,18 @@ function hrefOf(kind, r) {
   return `/pages/${def[2]}?q=${encodeURIComponent(r.r_ref || r.r_title)}`;
 }
 
-function rowHtml(kind, r) {
+// Escapes text and marks every searched word in it
+function hl(text, terms) {
+  const s = String(text ?? '');
+  if (!terms.length) return esc(s);
+  const rx = new RegExp(`(${terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi');
+  return s.split(rx).map((part, i) => (i % 2 ? `<mark class="hit">${esc(part)}</mark>` : esc(part))).join('');
+}
+
+function rowHtml(kind, r, terms) {
   const amt = r.r_amount !== null && r.r_amount !== undefined ? `<span class="muted"> · ${money(r.r_amount)}${r.r_currency ? ` ${esc(r.r_currency)}` : ''}</span>` : '';
-  return `<li style="padding:.35rem 0;border-bottom:1px solid var(--border,#2a2f3a)"><a href="${esc(hrefOf(kind, { id: r.r_id, r_ref: r.r_ref, r_title: r.r_title }))}"><strong>${esc(r.r_title)}</strong></a>
-    ${r.r_sub ? `<div class="muted">${esc(r.r_sub)}${amt}</div>` : (amt ? `<div>${amt}</div>` : '')}</li>`;
+  return `<li style="padding:.35rem 0;border-bottom:1px solid var(--border,#2a2f3a)"><a href="${esc(hrefOf(kind, { id: r.r_id, r_ref: r.r_ref, r_title: r.r_title }))}"><strong>${hl(r.r_title, terms)}</strong></a>
+    ${r.r_sub ? `<div class="muted">${hl(r.r_sub, terms)}${amt}</div>` : (amt ? `<div>${amt}</div>` : '')}</li>`;
 }
 
 async function run() {
@@ -53,6 +62,7 @@ async function run() {
   const { data, error } = await supabase.rpc('global_search', { p_company: ctx.companyId, p_query: q, p_limit: PER, p_kind: null });
   if (error) { panel.innerHTML = ''; return ui.errorFrom(error, 'The search failed.'); }
   if (!data.length) { panel.innerHTML = `<p class="muted">Nothing found for "${esc(q)}".</p>`; return; }
+  const terms = q.split(/\s+/).filter((t) => t.length > 1);
   const by = new Map();
   data.forEach((r) => { if (!by.has(r.r_kind)) by.set(r.r_kind, []); by.get(r.r_kind).push(r); });
   const root = document.createElement('div');
@@ -61,7 +71,7 @@ async function run() {
     const card = document.createElement('div');
     card.className = 'card';
     card.style.marginBottom = '1rem';
-    card.innerHTML = `<h4 style="margin-top:0">${esc(label)}</h4><ul style="list-style:none;padding:0;margin:0">${list.map((r) => rowHtml(kind, r)).join('')}</ul>`;
+    card.innerHTML = `<h4 style="margin-top:0">${esc(label)}</h4><ul style="list-style:none;padding:0;margin:0">${list.map((r) => rowHtml(kind, r, terms)).join('')}</ul>`;
     if (list.length >= PER) {
       const more = document.createElement('button');
       more.type = 'button';
@@ -72,7 +82,7 @@ async function run() {
         more.disabled = true;
         const res = await supabase.rpc('global_search', { p_company: ctx.companyId, p_query: q, p_limit: 50, p_kind: kind });
         if (res.error) { more.disabled = false; return ui.errorFrom(res.error, 'The search failed.'); }
-        card.querySelector('ul').innerHTML = res.data.map((r) => rowHtml(kind, r)).join('');
+        card.querySelector('ul').innerHTML = res.data.map((r) => rowHtml(kind, r, terms)).join('');
         more.remove();
       });
       card.append(more);

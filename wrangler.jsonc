@@ -1,6 +1,8 @@
 {
   "name": "finance-app",
   "compatibility_date": "2026-09-01",
+  // Stamps version.js so open pages are offered a reload after a deploy
+  "build": { "command": "node scripts/build-version.js" },
   "assets": {
     "directory": "./",
     "not_found_handling": "404-page"

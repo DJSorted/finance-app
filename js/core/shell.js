@@ -7,7 +7,7 @@ import { watchTableFilters } from './table-filters.js';
 
 // Add new pages here and they appear in the sidebar on every screen.
 const NAV = [
-  { section: 'Overview', pinned: true, items: [{ href: '/', label: 'Home' }, { href: '/pages/search.html', label: 'Search' }] },
+  { section: 'Overview', pinned: true, items: [{ href: '/', label: 'Home' }, { href: '/pages/search.html', label: 'Search', cls: 'nav-search', title: 'Search everything (press / anywhere)' }] },
   { section: 'Accounting', items: [
     { href: '/pages/journals.html', label: 'Journals' },
     { href: '/pages/trial-balance.html', label: 'Trial Balance' },
@@ -236,23 +236,14 @@ function buildShell(session, memberships, active) {
   }
   sidebar.append(brand);
 
-  const sform = h('form', 'side-search');
-  sform.style.cssText = 'padding:0 .75rem .5rem';
-  const sbox = h('input');
-  sbox.type = 'search';
-  sbox.placeholder = 'Search everything ( / )';
-  sbox.setAttribute('aria-label', 'Search everything');
-  sbox.style.width = '100%';
-  sform.append(sbox);
-  sform.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const v = sbox.value.trim();
-    if (v) location.href = `/pages/search.html?q=${encodeURIComponent(v)}`;
-  });
+  // "/" opens the global Search page (listed under Overview)
   document.addEventListener('keydown', (e) => {
-    if (e.key === '/' && !/^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || '')) { e.preventDefault(); sbox.focus(); }
+    if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || '') || (document.activeElement || {}).isContentEditable) return;
+    e.preventDefault();
+    if (normPath(location.pathname) === '/pages/search') document.querySelector('#toolbar input[type="search"], main input[type="search"]')?.focus();
+    else location.href = '/pages/search.html';
   });
-  sidebar.append(sform);
 
   const co = h('div', 'co');
   co.append(h('div', 'lbl', 'Company'));
@@ -276,8 +267,9 @@ function buildShell(session, memberships, active) {
   NAV.forEach((s) => {
     const items = h('div', 'nav-items');
     s.items.filter((n) => (!n.ownerOnly || active.role === 'owner') && (!n.roles || n.roles.includes(active.role))).forEach((n) => {
-      const a = h('a', normPath(n.href) === path ? 'active' : '', n.label);
+      const a = h('a', [n.cls, normPath(n.href) === path ? 'active' : ''].filter(Boolean).join(' '), n.label);
       a.href = n.href;
+      if (n.title) a.title = n.title;
       items.append(a);
     });
 

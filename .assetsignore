@@ -1,4 +1,5 @@
 sql/
+scripts/
 README.md
 wrangler.jsonc
 wrangler.json

@@ -226,6 +226,25 @@ async function showHome(c) {
     sub: `${deb.overdue > 0 ? `<span style="color:var(--danger)">${num0(deb.overdue)} overdue</span>` : 'Nothing overdue'}${bar(deb)}` }) : unavailable('Debtors', '/pages/debtors-ageing.html'));
   t2.push(cre ? tile({ label: 'Creditors', value: num0(cre.total), href: '/pages/creditors-ageing.html',
     sub: `${cre.overdue > 0 ? `<span style="color:var(--danger)">${num0(cre.overdue)} overdue</span>` : 'Nothing overdue'}${bar(cre)}` }) : unavailable('Creditors', '/pages/creditors-ageing.html'));
+  // Receipts / payments left on account and credit notes not yet matched to an invoice or bill
+  const unapplied = (res, kinds) => {
+    if (res.error || !res.data) return null;
+    const x = res.data.filter((r) => kinds.includes(r.doc_kind));
+    return { n: x.length, amt: x.reduce((s, r) => s + Math.abs(Number(r.base_outstanding)), 0) };
+  };
+  const uaCus = unapplied(sOpen, ['receipt', 'credit_note']);
+  const uaSup = unapplied(pOpen, ['payment', 'credit_note']);
+  if (!uaCus && !uaSup) t2.push(unavailable('Unapplied payments & credits', '/pages/open-items.html'));
+  else {
+    const line = (lbl, u) => (u ? `${lbl}: ${u.n ? `${num0(u.amt)} <span class="muted">(${u.n} item${u.n === 1 ? '' : 's'})</span>` : 'none'}` : `${lbl}: unavailable`);
+    const totalN = (uaCus ? uaCus.n : 0) + (uaSup ? uaSup.n : 0);
+    t2.push(tile({
+      label: 'Unapplied payments & credits', href: '/pages/open-items.html', tone: totalN ? 'warn' : '',
+      value: num0((uaCus ? uaCus.amt : 0) + (uaSup ? uaSup.amt : 0)),
+      sub: totalN ? `${line('Customers', uaCus)}<br>${line('Suppliers', uaSup)}` : `${esc(base)} · everything is allocated`,
+    }));
+  }
+
   t2.push(stockVal === null ? unavailable('Stock value', '/pages/stock-valuation.html')
     : tile({ label: 'Stock value', value: num0(stockVal), sub: `${esc(base)} · inventory accounts`, href: '/pages/stock-valuation.html' }));
 

@@ -1,6 +1,11 @@
 // Service worker: makes the app installable. It deliberately caches nothing,
 // so every page and API call always comes from the network (no stale data).
 // Only when a page can't load at all (offline) does it show a short notice.
+//
+// version.js (written on deploy by scripts/build-version.js) changes whenever
+// any app file changes. That changes this worker, so the browser installs it
+// and open pages are offered a reload (see js/core/pwa.js).
+try { importScripts('/version.js'); } catch (e) { /* not built yet (local dev) */ }
 
 const OFFLINE_HTML = `<!doctype html><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">

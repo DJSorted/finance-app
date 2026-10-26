@@ -32,7 +32,9 @@ function link(text, href, cls = '') {
 //        toolbarButtons: [{ text, onClick({ rows, lk, refresh }), editOnly }]   extra toolbar buttons that run code
 //        rowButtons: [{ text, onClick(row, { rows, lk, refresh }), show(row), editOnly }]   extra row buttons that run code
 //        attach: false,                                 turns off the Attach button (on by default for tables that can hold attachments)
-//        formCols: 3 }                                  a wider three-column add/edit dialog for long forms
+//        formCols: 3,                                   a wider three-column add/edit dialog for long forms
+//        detail: async (row, { lk, ctx }) => html }     list + detail layout: the list scrolls on top and the selected
+//                                                       record shows in a panel below (html must escape its own output)
 // Every column needs header and text(row); html(row) is optional and must escape its own output.
 export async function setupPage(ctx, cfg) {
   const toolbar = document.getElementById('toolbar');
@@ -47,6 +49,17 @@ export async function setupPage(ctx, cfg) {
   let rows = [];
   let lk = {};
   let term = '';
+
+  // List + detail layout: the detail card sits under the list card
+  let selectedId = null;
+  let detailEl = null;
+  let detailToken = 0;
+  if (cfg.detail) {
+    panel.classList.add('md-list');
+    detailEl = document.createElement('div');
+    detailEl.className = 'card md-detail';
+    panel.after(detailEl);
+  }
 
   async function load() {
     lk = cfg.lookups ? await cfg.lookups(ctx) : {};
@@ -98,9 +111,9 @@ export async function setupPage(ctx, cfg) {
   }
 
   function renderTable() {
-    if (!rows.length) { panel.innerHTML = `<p class="muted">No ${esc(cfg.plural)} yet.</p>`; return; }
+    if (!rows.length) { panel.innerHTML = `<p class="muted">No ${esc(cfg.plural)} yet.</p>`; selectRow(null); return; }
     const list = visibleRows();
-    if (!list.length) { panel.innerHTML = '<p class="muted">Nothing matches your search.</p>'; return; }
+    if (!list.length) { panel.innerHTML = '<p class="muted">Nothing matches your search.</p>'; selectRow(null); return; }
     const cols = cfg.columns(lk);
     const head = cols.map((c) => `<th${c.num ? ' style="text-align:right"' : ''}>${esc(c.header)}</th>`).join('') + (canAttach ? clipHead : '') + '<th></th>';
     const body = list.map((r) => {
@@ -116,6 +129,7 @@ export async function setupPage(ctx, cfg) {
       return `<tr data-id="${r.id}" class="${r.is_active === false ? 'inactive' : ''}">${tds}${canAttach ? clipCell(cfg.table, r.id) : ''}<td>${acts}</td></tr>`;
     }).join('');
     panel.innerHTML = `<div class="table-wrap"><table class="grid"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+    if (cfg.detail) selectRow(list.some((r) => r.id === selectedId) ? selectedId : list[0].id, false);
     if (canAttach) {
       fillClips(ctx, panel, (id) => {
         const row = rows.find((r) => r.id === id);
@@ -123,6 +137,29 @@ export async function setupPage(ctx, cfg) {
         return `Attachments: ${cfg.noun}${name ? ` ${name}` : ''}`;
       });
     }
+  }
+
+  // Highlights a row in the list and shows it in the detail panel
+  async function selectRow(id, scroll = true) {
+    if (!cfg.detail) return;
+    selectedId = id;
+    panel.querySelectorAll('tr.selected').forEach((tr) => tr.classList.remove('selected'));
+    const row = rows.find((r) => r.id === id);
+    if (!row) { detailEl.innerHTML = '<p class="muted">Select a record above to see its details.</p>'; delete detailEl.dataset.id; return; }
+    const tr = panel.querySelector(`tr[data-id="${id}"]`);
+    if (tr) { tr.classList.add('selected'); if (scroll) tr.scrollIntoView({ block: 'nearest' }); }
+
+    const token = ++detailToken;
+    const rb = (cfg.rowButtons || []).map((b, i) => ((!b.editOnly || ctx.canEdit) && (!b.show || b.show(row))
+      ? `<button class="btn btn-sm" data-act="rb${i}">${esc(b.text)}</button>` : '')).join('');
+    const acts = `<div class="row-actions md-actions">${rb}${canAttach ? '<button class="btn btn-sm" data-act="attach">Attach</button>' : ''}`
+      + `${ctx.canEdit ? `<button class="btn btn-sm btn-primary" data-act="edit">Edit</button>${canDelete ? '<button class="btn btn-sm" data-act="del">Delete</button>' : ''}` : ''}</div>`;
+    detailEl.dataset.id = id;
+    if (!detailEl.innerHTML.trim()) detailEl.innerHTML = '<p class="muted">Loading...</p>';
+    let html;
+    try { html = await cfg.detail(row, { lk, ctx }); } catch (e) { html = `<p class="muted">Could not load the details: ${esc(e.message || e)}</p>`; }
+    if (token !== detailToken) return;                       // a newer selection has started
+    detailEl.innerHTML = html + acts;
   }
 
   async function openForm(row) {
@@ -174,10 +211,16 @@ export async function setupPage(ctx, cfg) {
     } catch (e) { ui.errorFrom(e, 'Could not export.'); }
   }
 
-  panel.addEventListener('click', async (e) => {
+  async function onAction(e) {
     const t = e.target.closest('[data-act]');
-    if (!t) return;
-    const row = rows.find((r) => r.id === t.closest('tr').dataset.id);
+    if (!t) {
+      // List + detail: clicking anywhere else on a row selects it
+      const tr = cfg.detail && e.currentTarget === panel && !e.target.closest('a, button, input, select, label') ? e.target.closest('tr[data-id]') : null;
+      if (tr) selectRow(tr.dataset.id, false);
+      return;
+    }
+    const holder = t.closest('[data-id]');
+    const row = holder && rows.find((r) => r.id === holder.dataset.id);
     if (!row) return;
     if (t.dataset.act === 'attach' && canAttach) {
       const name = [row.code, row.name].filter(Boolean).join(' - ');
@@ -193,7 +236,24 @@ export async function setupPage(ctx, cfg) {
     if (!ctx.canEdit) return;
     if (t.dataset.act === 'edit') await openForm(row);
     else if (t.dataset.act === 'del' && canDelete) await doDelete(row);
-  });
+  }
+  panel.addEventListener('click', onAction);
+
+  if (cfg.detail) {
+    detailEl.addEventListener('click', onAction);
+    // Up / down arrows move through the list when you are not typing
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      const a = document.activeElement || {};
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName || '') || a.isContentEditable || document.querySelector('.modal-backdrop, dialog[open]')) return;
+      const trs = [...panel.querySelectorAll('tr[data-id]')].filter((tr) => tr.offsetParent !== null);
+      if (!trs.length) return;
+      e.preventDefault();
+      const i = trs.findIndex((tr) => tr.dataset.id === selectedId);
+      const next = trs[Math.max(0, Math.min(trs.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))];
+      selectRow(next.dataset.id);
+    });
+  }
 
   await refresh();
 }

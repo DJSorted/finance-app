@@ -3,10 +3,80 @@ import { startPage } from '../core/shell.js';
 import { setupPage } from '../core/setup-page.js';
 import { ui } from '../core/ui.js';
 import {
-  barcodeProblem, internalBarcodeMaker, linkCellHtml, showItemPreview, pickLabelItems, printLabels,
+  barcodeProblem, internalBarcodeMaker, linkCellHtml, showItemPreview, pickLabelItems, printLabels, isImageUrl,
 } from '../core/barcode.js';
 
 const TYPE_LABEL = { stock: 'Stock', service: 'Service', manufactured: 'Manufactured' };
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const qty = (n) => Number(n).toLocaleString(undefined, { maximumFractionDigits: 4 });
+const money = (n) => Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// Stock on hand per warehouse for one item
+async function stockFor(ctx, itemId) {
+  const base = () => supabase.from('stock_balances').select('warehouse_id, qty_on_hand, value, avg_cost')
+    .eq('company_id', ctx.companyId).eq('item_id', itemId);
+  let res = await supabase.from('stock_balances').select('warehouse_id, qty_on_hand, value, avg_cost, warehouses(code, name)')
+    .eq('company_id', ctx.companyId).eq('item_id', itemId);
+  if (res.error) res = await base();               // older schema without the warehouse link
+  if (res.error) throw res.error;
+  return res.data;
+}
+
+// The panel under the list for the selected item
+async function itemDetail(r, lk, ctx) {
+  const find = (list, id) => (id ? list.find((x) => x.id === id) : null);
+  const label = (x) => (x ? `${x.code} - ${x.name}` : '');
+  const cat = find(lk.categories, r.category_id);
+  const taxText = (id, catId) => {
+    const t = find(lk.taxes, id);
+    if (t) return `${label(t)} (${Number(t.rate)}%)`;
+    const ct = find(lk.taxes, catId);
+    return ct ? `<span class="muted">Category: ${esc(label(ct))} (${Number(ct.rate)}%)</span>` : '<span class="muted">Category default</span>';
+  };
+  const acc = (id) => { const a = find(lk.incomeAccounts, id); return a ? esc(label(a)) : '<span class="muted">Category account</span>'; };
+
+  const pic = r.link_url && isImageUrl(r.link_url)
+    ? `<a href="${esc(r.link_url)}" target="_blank" rel="noopener noreferrer" title="Open the full picture"><img src="${esc(r.link_url)}" alt="${esc(r.name)}" loading="lazy" referrerpolicy="no-referrer"></a>`
+    : '<div class="md-nopic">No picture<br><small>Add a picture link in Edit</small></div>';
+
+  const f = [
+    ['Barcode', r.barcode ? `<span class="mono">${esc(r.barcode)}</span>` : '<span class="muted">None</span>'],
+    ['Category', esc(label(cat))],
+    ['Group', esc(label(find(lk.groups, r.item_group_id))) || '<span class="muted">None</span>'],
+    ['Unit', esc(label(find(lk.uoms, r.uom_id)))],
+    ['Sales price', r.sales_price === null ? '<span class="muted">Not set</span>' : esc(priceFor(r, lk, false))],
+    ['Incl. sales tax', r.sales_price === null ? '' : esc(priceFor(r, lk, true))],
+    ['Sales tax', taxText(r.sales_tax_code_id, cat && cat.sales_tax_code_id)],
+    ['Purchases tax', taxText(r.purchase_tax_code_id, null)],
+    ['Revenue account', acc(r.revenue_account_id)],
+    ['Cost of sales account', acc(r.cogs_account_id)],
+  ];
+  if (r.link_url && !isImageUrl(r.link_url)) f.push(['Link', `<a href="${esc(r.link_url)}" target="_blank" rel="noopener noreferrer">${esc(r.link_url)}</a>`]);
+
+  let stock = '';
+  if (r.item_type !== 'service') {
+    try {
+      const sb = (await stockFor(ctx, r.id)).filter((b) => Number(b.qty_on_hand) !== 0 || Number(b.value) !== 0);
+      const tq = sb.reduce((s, b) => s + Number(b.qty_on_hand), 0);
+      const tv = sb.reduce((s, b) => s + Number(b.value), 0);
+      stock = `<h4>Stock on hand</h4>${sb.length ? `<table class="grid compact"><thead><tr><th>Warehouse</th><th class="num">Qty</th><th class="num">Avg cost</th><th class="num">Value</th></tr></thead><tbody>
+        ${sb.map((b) => `<tr><td>${esc(b.warehouses ? label(b.warehouses) : b.warehouse_id)}</td><td class="num">${qty(b.qty_on_hand)}</td><td class="num">${money(b.avg_cost)}</td><td class="num">${money(b.value)}</td></tr>`).join('')}
+        ${sb.length > 1 ? `<tr class="total"><td>Total</td><td class="num">${qty(tq)}</td><td></td><td class="num">${money(tv)}</td></tr>` : ''}</tbody></table>`
+        : '<p class="muted">None in stock.</p>'}`;
+    } catch (e) { stock = '<h4>Stock on hand</h4><p class="muted">Unavailable right now.</p>'; }
+  }
+
+  return `<div class="md-grid">
+    <div class="md-pic">${pic}</div>
+    <div class="md-main">
+      <h3 class="md-title">${esc(r.code)} - ${esc(r.name)}
+        <span class="badge">${esc(TYPE_LABEL[r.item_type] || r.item_type)}</span>${r.is_active ? '' : ' <span class="badge st-error">Inactive</span>'}</h3>
+      <dl class="md-fields">${f.filter(([, v]) => v).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>
+      ${r.description ? `<p class="md-desc">${esc(r.description)}</p>` : ''}
+    </div>
+    ${stock ? `<div class="md-side">${stock}</div>` : ''}
+  </div>`;
+}
 
 // Sales price for a label or preview, optionally with the item's (or its category's) sales tax added
 function priceFor(item, lk, inclTax) {
@@ -63,6 +133,7 @@ if (ctx) {
     hint: 'An item inherits its GL accounts and tax codes from its category. Revenue and cost of sales can be overridden per item. Leave the code blank to number it automatically by type.',
     defaults: { is_active: true },
     duplicateMessage: 'That item code or barcode is already used by another item.',
+    detail: (r, { lk, ctx: c }) => itemDetail(r, lk, c),
 
     lookups: async (c) => {
       const [cat, uom, tax, acc, cur, grp] = await Promise.all([
