@@ -93,7 +93,7 @@ table.grid tbody tr:hover { background: var(--surface-2); }
 .topbar .nav a { padding: .35rem .7rem; border-radius: 6px; color: var(--text-dim); }
 .topbar .nav a:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
 .topbar .nav a.active { background: var(--surface-2); color: var(--text); }
-select.compact { width: auto; }
+select.compact { width: auto; max-width: 100%; }
 
 /* Page layout */
 .page-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
@@ -117,7 +117,7 @@ tr.inactive td { opacity: .5; }
 
 /* Form dialogs */
 .modal.wide { max-width: 580px; max-height: 90vh; overflow-y: auto; }
-.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 .9rem; }
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 .9rem; }
 .form-grid .full { grid-column: 1 / -1; }
 .field.check { flex-direction: row; align-items: center; gap: .5rem; }
 .field.check input { width: auto; }
@@ -127,7 +127,7 @@ tr.inactive td { opacity: .5; }
 .modal.wide.form-wide { width: min(1100px, 96vw); max-width: none; }
 .form-grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; }
 @media (max-width: 900px) { .form-grid.cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 560px) { .form-grid, .form-grid.cols-3 { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .form-grid, .form-grid.cols-3 { grid-template-columns: minmax(0, 1fr); } }
 
 /* ===== App shell: sidebar + content ===== */
 .app-shell { display: flex; min-height: 100vh; }
@@ -418,8 +418,9 @@ mark.hit { background: rgba(245, 185, 66, .25); color: var(--warning); font-weig
 /* Time page timer */
 .time-timer { margin-bottom: 1rem; }
 .time-timer-row { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
-.time-timer-row select, .time-timer-row input { flex: 1 1 200px; width: auto; }
-.time-timer-info { flex: 1 1 200px; }
+.time-timer-row select, .time-timer-row input { flex: 1 1 200px; width: auto; min-width: 0; max-width: 100%; }
+.time-timer-info { flex: 1 1 200px; min-width: 0; }
+@media (max-width: 560px) { .time-timer-row > * { flex-basis: 100%; } .time-timer-row .btn { width: 100%; } }
 .time-clock { margin: 0; min-width: 7ch; }
 
 /* List + detail layout (setup-page detail option, e.g. Items) */
