@@ -132,3 +132,6 @@ $$;
 
 revoke all on function public.get_shared_document(text) from public;
 grant execute on function public.get_shared_document(text) to anon, authenticated;
+
+-- Make the API see the new columns straight away
+notify pgrst, 'reload schema';
