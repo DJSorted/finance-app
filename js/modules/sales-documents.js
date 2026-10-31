@@ -761,7 +761,23 @@ async function refundCreditNote(d) {
   if (saved) { ui.success('Refund posted.'); await refresh(); }
 }
 
+// ?open=<document id> opens that document straight away (e.g. from the Time page)
+async function openFromUrl() {
+  const id = new URLSearchParams(location.search).get('open');
+  if (!id) return;
+  history.replaceState(null, '', location.pathname);
+  let d = docs.find((x) => x.id === id);
+  if (!d) {
+    const { data } = await supabase.from('sales_documents').select('*, customers(code, name)')
+      .eq('company_id', ctx.companyId).eq('doc_type', TYPE).eq('id', id).maybeSingle();
+    d = data;
+  }
+  if (!d) return ui.warn(`That ${LABEL.toLowerCase()} is not in this company.`);
+  if (d.status === 'draft') { if (CAN_DRAFT) await openEditor(d); } else await openViewer(d);
+}
+
 if (ctx) {
   document.getElementById('company-title').textContent = ctx.company.name;
   await refresh();
+  await openFromUrl();
 }

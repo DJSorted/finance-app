@@ -15,9 +15,13 @@ if (ctx) {
     rowLinks: [{ text: 'Report', href: (r) => `/pages/project-report.html?project=${r.id}` }],
 
     lookups: async (c) => {
-      const { data, error } = await supabase.from('customers').select('id, code, name').eq('company_id', c.companyId).eq('is_active', true).order('code');
-      if (error) throw error;
-      return { customers: data };
+      const [cu, it] = await Promise.all([
+        supabase.from('customers').select('id, code, name').eq('company_id', c.companyId).eq('is_active', true).order('code'),
+        supabase.from('items').select('id, code, name').eq('company_id', c.companyId).eq('is_active', true).eq('item_type', 'service').order('code'),
+      ]);
+      if (cu.error) throw cu.error;
+      if (it.error) throw it.error;
+      return { customers: cu.data, items: it.data };
     },
 
     columns: (lk) => {
@@ -32,6 +36,7 @@ if (ctx) {
         { header: 'End', text: (r) => r.end_date || '', width: 12 },
         { header: 'Budget income', num: true, text: (r) => num(r.budget_income), width: 16 },
         { header: 'Budget cost', num: true, text: (r) => num(r.budget_cost), width: 16 },
+        { header: 'Hourly rate', num: true, text: (r) => num(r.hourly_rate), width: 14 },
       ];
     },
 
@@ -46,18 +51,25 @@ if (ctx) {
       { name: 'end_date', label: 'End date', type: 'date' },
       { name: 'budget_income', label: 'Budget income', type: 'number', hint: 'Optional. Shown against actual in Project Report.' },
       { name: 'budget_cost', label: 'Budget cost', type: 'number' },
+      { name: 'time_item_id', label: 'Bill time as', type: 'select',
+        options: [{ value: '', label: 'Not billed by the hour' }].concat(lk.items.map((i) => ({ value: i.id, label: `${i.code} - ${i.name}` }))),
+        hint: 'The service item time on this project is invoiced as (Time page).' },
+      { name: 'hourly_rate', label: 'Hourly rate', type: 'number',
+        hint: "In the customer's invoice currency. Blank uses the item's sales price." },
       { name: 'notes', label: 'Notes', type: 'textarea', full: true },
     ],
 
     validate: (v) => {
       if (v.budget_income !== null && v.budget_income < 0) throw new Error('The budget cannot be negative.');
       if (v.budget_cost !== null && v.budget_cost < 0) throw new Error('The budget cannot be negative.');
+      if (v.hourly_rate !== null && v.hourly_rate < 0) throw new Error('The hourly rate cannot be negative.');
     },
 
     toPayload: (v) => ({
       code: String(v.code || '').trim(), name: v.name, customer_id: v.customer_id || null, status: v.status || 'open',
       start_date: v.start_date || null, end_date: v.end_date || null,
       budget_income: v.budget_income === '' ? null : v.budget_income, budget_cost: v.budget_cost === '' ? null : v.budget_cost,
+      time_item_id: v.time_item_id || null, hourly_rate: v.hourly_rate === '' ? null : v.hourly_rate,
       notes: v.notes || null,
     }),
   });

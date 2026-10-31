@@ -79,6 +79,7 @@ const NAV = [
     { href: '/pages/nursery-bills.html', label: 'Allocate Bill Lines' },
   ] },
   { section: 'Projects', items: [
+    { href: '/pages/time.html', label: 'Time' },
     { href: '/pages/projects.html', label: 'Projects' },
     { href: '/pages/project-report.html', label: 'Project Report' },
   ] },

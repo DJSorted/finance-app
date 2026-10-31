@@ -415,6 +415,13 @@ mark.hit { background: rgba(245, 185, 66, .25); color: var(--warning); font-weig
 /* Dashboard tile that needs a look */
 .tile.warn .tile-value { color: var(--warning); }
 
+/* Time page timer */
+.time-timer { margin-bottom: 1rem; }
+.time-timer-row { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
+.time-timer-row select, .time-timer-row input { flex: 1 1 200px; width: auto; }
+.time-timer-info { flex: 1 1 200px; }
+.time-clock { margin: 0; min-width: 7ch; }
+
 /* List + detail layout (setup-page detail option, e.g. Items) */
 .md-list .table-wrap { max-height: 46vh; overflow: auto; }
 .md-list thead { position: sticky; top: 0; z-index: 2; background: var(--surface); }
