@@ -90,6 +90,7 @@ const DJ_CSS = `body{color:#1e1e1e}
   .dj-meta{margin-top:8px;border-collapse:collapse}.dj-meta td{padding:1px 14px 1px 0}.dj-meta td:first-child{color:#828282}
   .dj-meta td+td{font-weight:bold}
   .dj-banner{margin-top:16px;background:#f5f7ff;border-left:4px solid #2f81f7;padding:8px 10px;font-weight:bold;font-size:13px}
+  .dj-job{margin-top:14px;padding-top:10px;border-top:1px solid #d2d2d2}
   .dj-item{font-weight:bold}
   .dj-total td{font-size:15px}
   .dj-bottom{display:flex;gap:24px;margin-top:18px;padding-top:10px;border-top:1px solid #d2d2d2;font-size:11px;color:#505050;break-inside:avoid}
@@ -366,10 +367,10 @@ function djSalesBody({ company, d, lines, dec, customer, termsName, s, bank, ext
   }).join('');
   // Description: the project name(s) without their codes ("PRJ-0003 - Website" prints as "Website").
   const description = projectText.split(', ').map((p) => p.replace(/^\S+ - /, '')).filter(Boolean).join(', ');
-  const meta = [['Description', description], ['Job', jobText], ['Date', d.doc_date], isInv ? ['Due', d.due_date] : ['', ''],
+  const meta = [['Date', d.doc_date], isInv ? ['Due', d.due_date] : ['', ''],
     ['Reference', d.reference], ['Terms', termsName], ...extras].filter(([k, v]) => k && v);
-  // Highlighted notes above the items, as dj-sorted does.
-  const banner = d.notes;
+  // Highlighted above the items, as dj-sorted does: the project (description), then the notes.
+  const banner = [description, d.notes].filter((x) => x && String(x).trim()).join('\n');
   const contact = pick(company, CONTACT);
   const bankBlock = isInv && !isPaid && bank ? `<div><strong>${esc(bank.label || 'Payment details')}</strong><br>${nl(bank.details)}</div>` : '<div></div>';
   const custom = s.footer_text && s.footer_text.trim() ? [s.footer_text] : [];
@@ -378,7 +379,8 @@ function djSalesBody({ company, d, lines, dec, customer, termsName, s, bank, ext
       <div class="dj-logo">${logo ? `<img src="${esc(logo)}" alt="">` : `<strong>${esc(company.name || '')}</strong>`}</div></div>
     <div class="dj-cols">
       <div><div class="dj-lbl">${isInv ? 'Bill to' : 'Credit to'}</div><div class="dj-name">${esc(customer.name || '')}</div>
-        <div class="dj-sub">${detailHtml(customer)}</div></div>
+        <div class="dj-sub">${detailHtml(customer)}</div>
+        ${jobText ? `<div class="dj-job"><div class="dj-lbl">Job</div><div class="dj-name">${esc(jobText)}</div></div>` : ''}</div>
       <div><div class="dj-lbl">From</div><div class="dj-name">${esc(company.name || '')}</div>
         <div class="dj-sub">${[pick(company, ADDRESS), pick(company, TAX_IDS)].filter(Boolean).join('<br>')}</div>
         <table class="dj-meta">${meta.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}</table></div>
