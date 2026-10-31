@@ -36,7 +36,8 @@ export async function openShareDialog(ctx, { kind, doc, label, docNo, amountText
       const opts = await askShareOptions(ctx, kind, doc);
       if (!opts) return;
       const { data, error } = await supabase.from('shared_links')
-        .insert({ company_id: ctx.companyId, [COLUMN[kind]]: doc.id, extras: opts.extras, show_project: opts.show_project })
+        .insert({ company_id: ctx.companyId, [COLUMN[kind]]: doc.id, extras: opts.extras, show_project: opts.show_project,
+          show_job: opts.show_job, template: opts.template })
         .select().single();
       if (error) throw error;
       link = data;

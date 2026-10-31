@@ -41,8 +41,16 @@ function addressHtml(row) {
 
 export const DEFAULT_SETTINGS = {
   template: 'blue', accent: '#1f5fbf', greeting: '', closing: '', footer_text: '',
-  extra1_label: '', extra2_label: '', show_project_default: false,
+  extra1_label: '', extra2_label: '', show_project_default: false, show_job_default: false,
 };
+
+// Layouts offered on Document Settings and in the print dialog.
+export const TEMPLATES = [
+  ['blue', 'Blue (clean, blue headings and table)'],
+  ['modern', 'Modern (blue header band)'],
+  ['classic', 'Classic (black and grey)'],
+  ['djsorted', 'DJ Sorted (logo right, Bill to / From, blue table)'],
+];
 
 // Falls back to the defaults when the settings tables are missing or unreadable, so printing never breaks.
 async function loadSettings(companyId) {
@@ -57,11 +65,44 @@ function bankFor(banks, cur) {
   return banks.find((b) => b.currency_code === cur) || banks.find((b) => !b.currency_code) || null;
 }
 
+// DJ Sorted look (as the dj-sorted invoice PDF): big title with the number in blue, logo top right, Bill to / From
+// columns, solid blue table header with banded rows, blue total, payment details and contact side by side.
+// The generic rules also give purchase orders, receipts and statements the same feel.
+const DJ_CSS = `body{color:#1e1e1e}
+  h1{font-size:28px}h2{color:#2f81f7}
+  .head{border-bottom:1px solid #d2d2d2;padding-bottom:12px}
+  table.lines th{background:#2f81f7;color:#fff;border-bottom:0;font-size:11px}
+  table.lines tbody tr:nth-child(even) td{background:#f9fafc}
+  table.lines td{border-bottom:0;padding:7px 8px 9px}
+  table.tot tr.grand td{border-top:1px solid #d2d2d2;color:#2f81f7}
+  .parties>div{border:0;padding:0}
+  .parties .muted:first-child,.dj-lbl{font-size:10px;font-weight:bold;letter-spacing:.06em;text-transform:uppercase;color:#828282}
+  .dj-top{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;padding-bottom:14px;border-bottom:1px solid #d2d2d2}
+  .dj-top h1{font-size:34px;margin:0}
+  .dj-no{color:#2f81f7;font-weight:bold;font-size:14px;margin-top:2px}
+  .dj-logo img{max-height:90px;max-width:200px;display:block;border-radius:8px}
+  .dj-logo strong{font-size:22px}
+  .dj-cols{display:flex;gap:24px;margin-top:16px}
+  .dj-cols>div{flex:1}
+  .dj-cols>div+div{flex:0 0 42%}
+  .dj-name{font-weight:bold;font-size:14px;margin:3px 0 2px}
+  .dj-sub{color:#505050}
+  .dj-job{margin-top:8px}.dj-job strong{display:block;color:#1e1e1e}
+  .dj-meta{margin-top:8px;border-collapse:collapse}.dj-meta td{padding:1px 14px 1px 0}.dj-meta td:first-child{color:#828282}
+  .dj-meta td+td{font-weight:bold}
+  .dj-banner{margin-top:16px;background:#f5f7ff;border-left:4px solid #2f81f7;padding:8px 10px;font-weight:bold;font-size:13px}
+  .dj-item{font-weight:bold}
+  .dj-total td{font-size:15px}
+  .dj-bottom{display:flex;gap:24px;margin-top:18px;padding-top:10px;border-top:1px solid #d2d2d2;font-size:11px;color:#505050;break-inside:avoid}
+  .dj-bottom>div{flex:1}.dj-bottom strong{color:#1e1e1e}
+  .dj-end{text-align:center;font-style:italic;color:#9a9a9a}`;
+
 const accentOf = (s) => (/^#[0-9a-f]{6}$/i.test(s.accent || '') ? s.accent : DEFAULT_SETTINGS.accent);
 
 function templateCss(s) {
   const a = accentOf(s);
   if (s.template === 'classic') return '';
+  if (s.template === 'djsorted') return DJ_CSS;
   if (s.template === 'modern') {
     return `.head{background:${a};color:#fff;padding:14px 16px;border-radius:4px}.head .muted{color:rgba(255,255,255,.85)}
       table.lines th{background:${a};color:#fff;border-bottom-color:${a}}h2{color:${a}}
@@ -93,7 +134,7 @@ function docHtml(title, body, s = DEFAULT_SETTINGS, extraCss = '') {
       table.lines tr.strong td{font-weight:bold;background:#f7f7f7}
       table.lines tr.sub td{border-bottom:0;padding-top:0;color:#555;font-size:11px}
       table.lines tr.sub td.txt{padding-left:18px}
-      .n{text-align:right;white-space:nowrap}
+      .n,table.lines th.n{text-align:right;white-space:nowrap}
       table.tot{margin-left:auto;width:52%;border-collapse:collapse;margin-top:10px}
       table.tot td{padding:4px 8px}
       table.tot tr.grand td{font-weight:bold;font-size:13px;border-top:2px solid #111}
@@ -109,13 +150,21 @@ function docHtml(title, body, s = DEFAULT_SETTINGS, extraCss = '') {
       </style></head><body><div class="page">${body}</div></body></html>`;
 }
 
-// Asks for the extra field values (and whether to show the project) before printing or sharing.
-// Resolves null when cancelled.
-async function askExtras(s, withProject, action = 'Print') {
+// Asks for the layout, the extra field values and whether to show the project and its job before printing or
+// sharing. Resolves { extras, project, job, template }, or null when cancelled.
+async function askExtras(s, withProject, action = 'Print', withJob = false) {
   const labels = [s.extra1_label, s.extra2_label].map((x) => (x || '').trim());
-  if (!labels[0] && !labels[1] && !withProject) return { extras: [], project: false };
   const node = document.createElement('div');
   node.className = 'form-grid';
+  const lw = document.createElement('div');
+  lw.className = 'field full';
+  const ll = document.createElement('label');
+  ll.textContent = 'Layout';
+  const layout = document.createElement('select');
+  TEMPLATES.forEach(([v, l]) => { const o = document.createElement('option'); o.value = v; o.textContent = l; layout.append(o); });
+  layout.value = TEMPLATES.some(([v]) => v === s.template) ? s.template : DEFAULT_SETTINGS.template;
+  lw.append(ll, layout);
+  node.append(lw);
   const inputs = labels.map((l) => {
     if (!l) return null;
     const w = document.createElement('div');
@@ -140,12 +189,27 @@ async function askExtras(s, withProject, action = 'Print') {
     w.append(proj, lab);
     node.append(w);
   }
+  let job = null;
+  if (withJob) {
+    const w = document.createElement('div');
+    w.className = 'field check';
+    job = document.createElement('input');
+    job.type = 'checkbox';
+    job.style.width = 'auto';
+    job.checked = !!s.show_job_default;
+    const lab = document.createElement('label');
+    lab.textContent = 'Show the job';
+    w.append(job, lab);
+    node.append(w);
+  }
   const res = await ui.dialog({ title: action, node, dismissValue: false,
     buttons: [{ label: 'Cancel', value: false, className: 'btn-ghost' }, { label: action, value: true, className: 'btn-primary' }] });
   if (!res) return null;
   return {
     extras: labels.map((l, i) => [l, inputs[i] ? inputs[i].value.trim() : '']).filter(([l, v]) => l && v),
     project: proj ? proj.checked : false,
+    job: job ? job.checked : false,
+    template: layout.value,
   };
 }
 
@@ -217,7 +281,7 @@ function lineText(x) {
 }
 
 // outstanding: amount still owed on a posted invoice (null when unknown, e.g. a draft); paid = gross - outstanding.
-function salesBody({ company, base, d, lines, dec, customer, termsName, s, bank, extras = [], projectText = '', outstanding = null }) {
+function salesBody({ company, base, d, lines, dec, customer, termsName, s, bank, extras = [], projectText = '', jobText = '', outstanding = null }) {
   const isInv = d.doc_type === 'invoice';
   const hasTax = Number(d.tax_total) > 0;
   const title = `${hasTax ? 'Tax ' : ''}${isInv ? 'invoice' : 'credit note'}`.replace(/^./, (c) => c.toUpperCase());
@@ -260,9 +324,14 @@ function salesBody({ company, base, d, lines, dec, customer, termsName, s, bank,
       <tr class="grand"><td>Balance due (${cur})</td><td class="n">${money(owed, dec)}</td></tr>`;
   }
 
+  if (s.template === 'djsorted') {
+    return { title, body: djSalesBody({ company, d, lines, dec, customer, termsName, s, bank, extras, projectText, jobText,
+      title, isInv, hasTax, taxRows, payRows, isPaid, rateNote }) };
+  }
+
   const body = `${header(company, title, [
     [`${isInv ? 'Invoice' : 'Credit note'} no`, d.doc_no], ['Date', d.doc_date], isInv ? ['Due date', d.due_date] : ['', ''],
-    ['Reference', d.reference], ['Payment terms', termsName], ['Project', projectText], ...extras,
+    ['Reference', d.reference], ['Payment terms', termsName], ['Project', projectText], ['Job', jobText], ...extras,
   ])}
       <div class="parties"><div><div class="muted">${isInv ? 'Bill to' : 'Credit to'}</div><strong>${esc(customer.name || '')}</strong>
         <div>${detailHtml(customer)}</div></div></div>
@@ -276,6 +345,56 @@ function salesBody({ company, base, d, lines, dec, customer, termsName, s, bank,
       ${rateNote}${d.notes ? `<div class="note"><strong>Notes</strong><br>${nl(d.notes)}</div>` : ''}
       ${isInv && !isPaid ? bankHtml(bank) : ''}${endHtml(company, s)}`;
   return { title, body };
+}
+
+// The DJ Sorted layout of an invoice or credit note (see DJ_CSS).
+function djSalesBody({ company, d, lines, dec, customer, termsName, s, bank, extras, projectText, jobText,
+  title, isInv, hasTax, taxRows, payRows, isPaid, rateNote }) {
+  const has = (row, k) => row && typeof row[k] === 'string' && row[k].trim();
+  const pick = (row, keys) => keys.filter((k) => has(row, k)).map((k) => nl(row[k].trim())).join('<br>');
+  const logo = logoUrl(company);
+  const rows = lines.map((x, i) => {
+    const it = x.items || {};
+    const own = String(x.description || '').trim();
+    const name = String(it.name || '').trim() || own;
+    const sub = own && own !== name ? own : String(it.description || '').trim();
+    return `<tr><td class="muted" style="text-align:center;width:18px">${i + 1}</td>
+      <td><div class="dj-item">${esc(name)}</div>${sub && sub !== name ? `<div class="muted" style="font-size:10.5px">${nl(sub)}</div>` : ''}</td>
+      <td class="n">${qty(x.quantity)}</td><td class="n">${money(x.unit_price, dec)}</td>
+      ${hasTax ? `<td class="n">${Number(x.tax_rate) ? `${Number(x.tax_rate)}%` : ''}</td>` : ''}
+      <td class="n"><strong>${money(x.net_amount, dec)}</strong></td></tr>`;
+  }).join('');
+  const meta = [['Date', d.doc_date], isInv ? ['Due', d.due_date] : ['', ''], ['Reference', d.reference], ['Terms', termsName],
+    ['Project', projectText], ...extras].filter(([k, v]) => k && v);
+  // Highlighted line above the items, as dj-sorted does: the notes, else the job, else the project.
+  const banner = d.notes || jobText || projectText;
+  const contact = pick(company, CONTACT);
+  const bankBlock = isInv && !isPaid && bank ? `<div><strong>${esc(bank.label || 'Payment details')}</strong><br>${nl(bank.details)}</div>` : '<div></div>';
+  const custom = s.footer_text && s.footer_text.trim() ? [s.footer_text] : [];
+  const foot = custom.concat(FOOTER_KEYS.map((k) => company[k])).filter((x) => typeof x === 'string' && x.trim());
+  return `<div class="dj-top"><div><h1>${esc(title)}</h1><div class="dj-no">${esc(d.doc_no || '')}</div></div>
+      <div class="dj-logo">${logo ? `<img src="${esc(logo)}" alt="">` : `<strong>${esc(company.name || '')}</strong>`}</div></div>
+    <div class="dj-cols">
+      <div><div class="dj-lbl">${isInv ? 'Bill to' : 'Credit to'}</div><div class="dj-name">${esc(customer.name || '')}</div>
+        <div class="dj-sub">${detailHtml(customer)}</div>
+        ${jobText ? `<div class="dj-job"><strong>Job</strong><span class="dj-sub">${esc(jobText)}</span></div>` : ''}</div>
+      <div><div class="dj-lbl">From</div><div class="dj-name">${esc(company.name || '')}</div>
+        <div class="dj-sub">${[pick(company, ADDRESS), pick(company, TAX_IDS)].filter(Boolean).join('<br>')}</div>
+        <table class="dj-meta">${meta.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}</table></div>
+    </div>
+    ${banner ? `<div class="dj-banner">${nl(banner)}</div>` : ''}
+    ${greetingHtml(s, customer.name)}
+    <table class="lines"><thead><tr><th>#</th><th>Item</th><th class="n">Qty</th><th class="n">Rate</th>
+      ${hasTax ? '<th class="n">Tax</th>' : ''}<th class="n">Total</th></tr></thead><tbody>${rows}</tbody></table>
+    <table class="tot">${hasTax ? `<tr><td class="muted">Subtotal</td><td class="n">${money(d.net_total, dec)}</td></tr>${taxRows}` : ''}
+      ${payRows.replace(/class="grand"/g, 'class="grand dj-total"')}</table>
+    ${isPaid ? '<div style="text-align:right"><span class="paid">PAID</span></div>' : ''}
+    ${rateNote}
+    <div class="end">
+      <div class="dj-bottom">${bankBlock}<div>${contact ? `<strong>Contact</strong><br>${contact}` : ''}</div></div>
+      ${foot.length ? `<div class="foot">${foot.map(nl).join('<br><br>')}</div>` : ''}
+      ${s.closing && s.closing.trim() ? `<div class="closing dj-end">${nl(s.closing.trim())}</div>` : ''}
+    </div>`;
 }
 
 // Full HTML of a made-up invoice, for the preview on the Document Settings page.
@@ -296,6 +415,7 @@ export async function sampleDocumentHtml(ctx, settings, banks = []) {
   const { title, body } = salesBody({
     company: co.row, base: co.base, d, lines, dec: 2, customer: { name: 'Sample Customer (Pty) Ltd', address: '1 Example Street\nCape Town' },
     termsName: '30 days', s, bank: bankFor(banks, cur), extras, projectText: s.show_project_default ? 'PRJ-01 - Sample project' : '',
+    jobText: s.show_job_default ? 'Sample job' : '',
   });
   return docHtml(title, body, s);
 }
@@ -311,15 +431,16 @@ export async function printSalesDocument(ctx, d) {
       loadSettings(ctx.companyId),
     ]);
     if (l.error) throw l.error;
-    const s = cfg.settings;
     const projectIds = [...new Set(l.data.map((x) => x.project_id).filter(Boolean))];
-    const ask = await askExtras(s, projectIds.length > 0);
+    // select('*') so printing still works before sql/036 adds projects.job
+    const p = projectIds.length ? await supabase.from('projects').select('*').in('id', projectIds) : { data: [] };
+    const projects = p.error ? [] : p.data;
+    const jobs = [...new Set(projects.map((x) => String(x.job || '').trim()).filter(Boolean))];
+    const ask = await askExtras(cfg.settings, projectIds.length > 0, 'Print', jobs.length > 0);
     if (!ask) return;
-    let projectText = '';
-    if (ask.project && projectIds.length) {
-      const p = await supabase.from('projects').select('code, name').in('id', projectIds);
-      if (!p.error) projectText = p.data.map((x) => `${x.code} - ${x.name}`).join(', ');
-    }
+    const s = { ...cfg.settings, template: ask.template };
+    const projectText = ask.project ? projects.map((x) => `${x.code} - ${x.name}`).join(', ') : '';
+    const jobText = ask.job ? jobs.join(', ') : '';
     // Posted invoices: what is still owed today, after receipts and credit notes applied to it.
     let outstanding = null;
     if (d.doc_type === 'invoice' && d.status === 'posted') {
@@ -333,7 +454,7 @@ export async function printSalesDocument(ctx, d) {
     }
     const { title, body } = salesBody({
       company: co.row, base: co.base, d, lines: l.data, dec, customer: cust.data || {}, termsName: terms.data ? terms.data.name : '',
-      s, bank: bankFor(cfg.banks, d.currency_code), extras: ask.extras, projectText, outstanding,
+      s, bank: bankFor(cfg.banks, d.currency_code), extras: ask.extras, projectText, jobText, outstanding,
     });
     await printHtml(`${title} ${d.doc_no}`, body, s);
   } catch (e) { ui.errorFrom(e, 'Could not prepare the document for printing.'); }
@@ -351,9 +472,9 @@ export async function printPurchaseOrder(ctx, o) {
       loadSettings(ctx.companyId),
     ]);
     if (l.error) throw l.error;
-    const s = cfg.settings;
-    const ask = await askExtras(s, false);
+    const ask = await askExtras(cfg.settings, false);
     if (!ask) return;
+    const s = { ...cfg.settings, template: ask.template };
     const supplier = sup.data || {};
     const rows = l.data.map((x, i) => `<tr><td>${i + 1}</td>
       <td>${esc(x.description)}${x.items && x.items.code ? `<div class="muted">${esc(x.items.code)}</div>` : ''}</td>
@@ -449,9 +570,9 @@ export async function printMoneyDocument(ctx, kind, r) {
       r.bank_account_id ? supabase.from('gl_accounts').select('name').eq('id', r.bank_account_id).maybeSingle() : Promise.resolve({ data: null }),
     ]);
     if (al.error) throw al.error;
-    const s = cfg.settings;
-    const ask = await askExtras(s, false);
+    const ask = await askExtras(cfg.settings, false);
     if (!ask) return;
+    const s = { ...cfg.settings, template: ask.template };
     const { title, body } = moneyBody({
       kind, company: co.row, base: co.base, r, allocs: al.data, party: party.data, dec, s, extras: ask.extras,
       bankName: bk.data ? bk.data.name : '',
@@ -463,16 +584,19 @@ export async function printMoneyDocument(ctx, kind, r) {
 /* ---------- shared links (customers view a document in the browser) ---------- */
 
 // Asks for the same extras as printing, before a share link is made. kind: 'sales' or 'receipt'.
-// Resolves { extras, show_project } or null when cancelled.
+// Resolves { extras, show_project, show_job, template } or null when cancelled.
 export async function askShareOptions(ctx, kind, doc) {
   const cfg = await loadSettings(ctx.companyId);
   let withProject = false;
+  let withJob = false;
   if (kind === 'sales') {
-    const l = await supabase.from('sales_document_lines').select('project_id').eq('document_id', doc.id);
-    withProject = !l.error && l.data.some((x) => x.project_id);
+    const l = await supabase.from('sales_document_lines').select('projects(*)').eq('document_id', doc.id);
+    const projects = l.error ? [] : l.data.map((x) => x.projects).filter(Boolean);
+    withProject = projects.length > 0;
+    withJob = projects.some((x) => String(x.job || '').trim());
   }
-  const ask = await askExtras(cfg.settings, withProject, 'Create link');
-  return ask ? { extras: ask.extras, show_project: ask.project } : null;
+  const ask = await askExtras(cfg.settings, withProject, 'Create link', withJob);
+  return ask ? { extras: ask.extras, show_project: ask.project, show_job: ask.job, template: ask.template } : null;
 }
 
 // On screen the document sits on a sheet of paper; on a phone the columns stack. Printing is unchanged.
@@ -492,7 +616,7 @@ const SHARED_CSS = `@media screen{
 
 // Full HTML page for get_shared_document()'s result, with a Print / Save as PDF bar on top.
 export function sharedDocumentHtml(data) {
-  const s = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
+  const s = { ...DEFAULT_SETTINGS, ...(data.settings || {}), ...(data.template ? { template: data.template } : {}) };
   const dec = data.decimals !== null && data.decimals !== undefined ? Number(data.decimals) : 2;
   const extras = Array.isArray(data.extras) ? data.extras : [];
   let doc;
@@ -505,7 +629,7 @@ export function sharedDocumentHtml(data) {
   } else {
     doc = salesBody({
       company: data.company || {}, base: data.base, d: data.doc, lines: data.lines || [], dec, customer: data.customer || {},
-      termsName: data.terms || '', s, bank: data.bank, extras, projectText: data.project || '',
+      termsName: data.terms || '', s, bank: data.bank, extras, projectText: data.project || '', jobText: data.job || '',
       outstanding: data.outstanding === null || data.outstanding === undefined ? null : Number(data.outstanding),
     });
     doc.title = `${doc.title} ${data.doc.doc_no || ''}`;

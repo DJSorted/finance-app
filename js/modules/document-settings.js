@@ -2,7 +2,7 @@ import { supabase } from '../core/supabase.js';
 import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { makeModal } from '../core/attachments.js';
-import { DEFAULT_SETTINGS, sampleDocumentHtml } from '../core/print-docs.js';
+import { DEFAULT_SETTINGS, TEMPLATES, sampleDocumentHtml } from '../core/print-docs.js';
 
 const ctx = await startPage();
 
@@ -54,6 +54,7 @@ function current() {
   return {
     template: form.template.value, accent: form.accent.value, greeting: form.greeting.value, closing: form.closing.value,
     footer_text: form.footer.value, extra1_label: form.e1.value, extra2_label: form.e2.value, show_project_default: form.proj.checked,
+    show_job_default: form.job.checked,
   };
 }
 
@@ -62,7 +63,7 @@ async function save() {
   const { error } = await supabase.from('document_settings').upsert({
     company_id: ctx.companyId, template: v.template, accent: v.accent, greeting: v.greeting || null, closing: v.closing || null,
     footer_text: v.footer_text || null, extra1_label: v.extra1_label || null, extra2_label: v.extra2_label || null,
-    show_project_default: v.show_project_default, updated_at: new Date().toISOString(),
+    show_project_default: v.show_project_default, show_job_default: v.show_job_default, updated_at: new Date().toISOString(),
   }, { onConflict: 'company_id' });
   if (error) return ui.errorFrom(error, 'Could not save the settings.');
   settings = { ...settings, ...v };
@@ -150,13 +151,13 @@ async function init() {
   look.append(el('h4', '', 'Look'));
   look.firstChild.style.marginTop = '0';
   form.template = el('select');
-  [['blue', 'Blue (clean, blue headings and table)'], ['modern', 'Modern (blue header band)'], ['classic', 'Classic (black and grey)']]
-    .forEach(([v, l]) => option(form.template, v, l));
+  TEMPLATES.forEach(([v, l]) => option(form.template, v, l));
   form.template.value = settings.template;
   form.accent = el('input'); form.accent.type = 'color'; form.accent.value = /^#[0-9a-f]{6}$/i.test(settings.accent) ? settings.accent : DEFAULT_SETTINGS.accent;
   form.accent.style.width = '64px';
   const g1 = el('div', 'form-grid');
-  g1.append(field('Template', form.template), field('Accent colour', form.accent));
+  g1.append(field('Template', form.template, false, 'The default layout. You can pick another each time you print.'),
+    field('Accent colour', form.accent, false, 'Not used by the DJ Sorted layout.'));
   look.append(g1);
 
   const words = el('div', 'card');
@@ -172,12 +173,15 @@ async function init() {
   form.proj = el('input'); form.proj.type = 'checkbox'; form.proj.checked = !!settings.show_project_default; form.proj.style.width = 'auto';
   const projRow = el('div', 'field check');
   projRow.append(form.proj, el('label', '', 'Show the project on documents by default'));
+  form.job = el('input'); form.job.type = 'checkbox'; form.job.checked = !!settings.show_job_default; form.job.style.width = 'auto';
+  const jobRow = el('div', 'field check');
+  jobRow.append(form.job, el('label', '', "Show the project's job on invoices by default"));
   const g2 = el('div', 'form-grid');
   g2.append(field('Greeting (above the lines)', form.greeting, true, 'Optional. For example: Dear {name},'),
     field('Closing message (centred at the bottom of the page)', form.closing, true),
     field('Footer (small print at the bottom)', form.footer, true),
     field('Extra field 1 label', form.e1, false, 'Asked for each time you print. Leave a value empty to leave the field off.'),
-    field('Extra field 2 label', form.e2), projRow);
+    field('Extra field 2 label', form.e2), projRow, jobRow);
   words.append(g2);
 
   const bankCard = el('div', 'card');

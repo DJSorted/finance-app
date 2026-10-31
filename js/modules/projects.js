@@ -30,6 +30,7 @@ if (ctx) {
       return [
         { header: 'Code', text: (r) => r.code, width: 12 },
         { header: 'Name', text: (r) => r.name, width: 32 },
+        { header: 'Job', text: (r) => r.job || '', width: 20 },
         { header: 'Customer', text: (r) => cust(r.customer_id), width: 30 },
         { header: 'Status', text: (r) => STATUS[r.status] || r.status, width: 10 },
         { header: 'Start', text: (r) => r.start_date || '', width: 12 },
@@ -43,6 +44,7 @@ if (ctx) {
     fields: (lk) => [
       { name: 'code', label: 'Code', hint: 'Leave blank on a new project to number it automatically.' },
       { name: 'name', label: 'Name', required: true },
+      { name: 'job', label: 'Job', full: true, hint: 'Printed on invoices when "Show the job" is ticked in the print dialog.' },
       { name: 'customer_id', label: 'Customer', type: 'select', full: true,
         options: [{ value: '', label: 'No customer (internal project)' }].concat(lk.customers.map((c) => ({ value: c.id, label: `${c.code} - ${c.name}` }))) },
       { name: 'status', label: 'Status', type: 'select', options: Object.entries(STATUS).map(([value, label]) => ({ value, label })),
@@ -66,7 +68,7 @@ if (ctx) {
     },
 
     toPayload: (v) => ({
-      code: String(v.code || '').trim(), name: v.name, customer_id: v.customer_id || null, status: v.status || 'open',
+      code: String(v.code || '').trim(), name: v.name, job: String(v.job || '').trim() || null, customer_id: v.customer_id || null, status: v.status || 'open',
       start_date: v.start_date || null, end_date: v.end_date || null,
       budget_income: v.budget_income === '' ? null : v.budget_income, budget_cost: v.budget_cost === '' ? null : v.budget_cost,
       time_item_id: v.time_item_id || null, hourly_rate: v.hourly_rate === '' ? null : v.hourly_rate,
