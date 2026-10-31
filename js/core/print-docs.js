@@ -87,7 +87,6 @@ const DJ_CSS = `body{color:#1e1e1e}
   .dj-cols>div+div{flex:0 0 42%}
   .dj-name{font-weight:bold;font-size:14px;margin:3px 0 2px}
   .dj-sub{color:#505050}
-  .dj-job{margin-top:8px}.dj-job strong{display:block;color:#1e1e1e}
   .dj-meta{margin-top:8px;border-collapse:collapse}.dj-meta td{padding:1px 14px 1px 0}.dj-meta td:first-child{color:#828282}
   .dj-meta td+td{font-weight:bold}
   .dj-banner{margin-top:16px;background:#f5f7ff;border-left:4px solid #2f81f7;padding:8px 10px;font-weight:bold;font-size:13px}
@@ -117,6 +116,7 @@ function docHtml(title, body, s = DEFAULT_SETTINGS, extraCss = '') {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>
       @page{size:A4;margin:14mm}
       body{font:12px/1.45 Arial,sans-serif;color:#111;margin:0}
+      *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
       .page{display:flex;flex-direction:column;min-height:calc(297mm - 28mm - 4px)}
       .end{margin-top:auto}
       .closing{margin-top:18px;text-align:center}
@@ -269,15 +269,18 @@ function footer(company, s = DEFAULT_SETTINGS) {
 
 /* ---------- invoice and credit note ---------- */
 
-// A line's description cell: the item name, with the description underneath in small grey text.
-// The description is the line's own text when it was changed from the item name, else the item's description.
-// Lines without an item print just their text.
-function lineText(x) {
+// A line's name and the grey text under it: the item name over the item's description. The line's own text
+// is only used when the item has no description (or there is no item). Lines without an item print their text.
+function lineParts(x) {
   const it = x.items || {};
   const own = String(x.description || '').trim();
   const name = String(it.name || '').trim() || own;
-  const sub = own && own !== name ? own : String(it.description || '').trim();
-  return `${esc(name)}${sub && sub !== name ? `<div class="muted" style="font-size:10.5px">${nl(sub)}</div>` : ''}`;
+  const sub = String(it.description || '').trim() || (own !== name ? own : '');
+  return { name, sub: sub && sub !== name ? sub : '' };
+}
+function lineText(x) {
+  const { name, sub } = lineParts(x);
+  return `${esc(name)}${sub ? `<div class="muted" style="font-size:10.5px">${nl(sub)}</div>` : ''}`;
 }
 
 // outstanding: amount still owed on a posted invoice (null when unknown, e.g. a draft); paid = gross - outstanding.
@@ -354,20 +357,19 @@ function djSalesBody({ company, d, lines, dec, customer, termsName, s, bank, ext
   const pick = (row, keys) => keys.filter((k) => has(row, k)).map((k) => nl(row[k].trim())).join('<br>');
   const logo = logoUrl(company);
   const rows = lines.map((x, i) => {
-    const it = x.items || {};
-    const own = String(x.description || '').trim();
-    const name = String(it.name || '').trim() || own;
-    const sub = own && own !== name ? own : String(it.description || '').trim();
+    const { name, sub } = lineParts(x);
     return `<tr><td class="muted" style="text-align:center;width:18px">${i + 1}</td>
-      <td><div class="dj-item">${esc(name)}</div>${sub && sub !== name ? `<div class="muted" style="font-size:10.5px">${nl(sub)}</div>` : ''}</td>
+      <td><div class="dj-item">${esc(name)}</div>${sub ? `<div class="muted" style="font-size:10.5px">${nl(sub)}</div>` : ''}</td>
       <td class="n">${qty(x.quantity)}</td><td class="n">${money(x.unit_price, dec)}</td>
       ${hasTax ? `<td class="n">${Number(x.tax_rate) ? `${Number(x.tax_rate)}%` : ''}</td>` : ''}
       <td class="n"><strong>${money(x.net_amount, dec)}</strong></td></tr>`;
   }).join('');
-  const meta = [['Date', d.doc_date], isInv ? ['Due', d.due_date] : ['', ''], ['Reference', d.reference], ['Terms', termsName],
-    ['Project', projectText], ...extras].filter(([k, v]) => k && v);
-  // Highlighted line above the items, as dj-sorted does: the notes, else the job, else the project.
-  const banner = d.notes || jobText || projectText;
+  // Description: the project name(s) without their codes ("PRJ-0003 - Website" prints as "Website").
+  const description = projectText.split(', ').map((p) => p.replace(/^\S+ - /, '')).filter(Boolean).join(', ');
+  const meta = [['Description', description], ['Job', jobText], ['Date', d.doc_date], isInv ? ['Due', d.due_date] : ['', ''],
+    ['Reference', d.reference], ['Terms', termsName], ...extras].filter(([k, v]) => k && v);
+  // Highlighted notes above the items, as dj-sorted does.
+  const banner = d.notes;
   const contact = pick(company, CONTACT);
   const bankBlock = isInv && !isPaid && bank ? `<div><strong>${esc(bank.label || 'Payment details')}</strong><br>${nl(bank.details)}</div>` : '<div></div>';
   const custom = s.footer_text && s.footer_text.trim() ? [s.footer_text] : [];
@@ -376,8 +378,7 @@ function djSalesBody({ company, d, lines, dec, customer, termsName, s, bank, ext
       <div class="dj-logo">${logo ? `<img src="${esc(logo)}" alt="">` : `<strong>${esc(company.name || '')}</strong>`}</div></div>
     <div class="dj-cols">
       <div><div class="dj-lbl">${isInv ? 'Bill to' : 'Credit to'}</div><div class="dj-name">${esc(customer.name || '')}</div>
-        <div class="dj-sub">${detailHtml(customer)}</div>
-        ${jobText ? `<div class="dj-job"><strong>Job</strong><span class="dj-sub">${esc(jobText)}</span></div>` : ''}</div>
+        <div class="dj-sub">${detailHtml(customer)}</div></div>
       <div><div class="dj-lbl">From</div><div class="dj-name">${esc(company.name || '')}</div>
         <div class="dj-sub">${[pick(company, ADDRESS), pick(company, TAX_IDS)].filter(Boolean).join('<br>')}</div>
         <table class="dj-meta">${meta.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}</table></div>
