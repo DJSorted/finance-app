@@ -5,6 +5,7 @@ wrangler.jsonc
 wrangler.json
 wrangler.toml
 .assetsignore
-.gitignore.git
+.gitignore
+.git/
 .wrangler
 node_modules
