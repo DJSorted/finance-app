@@ -9,3 +9,9 @@ wrangler.toml
 .git/
 .wrangler
 node_modules
+.claude/
+.vscode/
+.env
+.env.*
+*.local
+.DS_Store
