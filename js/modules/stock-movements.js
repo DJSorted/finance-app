@@ -10,7 +10,7 @@ const hint = document.getElementById('hint');
 const panel = document.getElementById('panel');
 
 const TYPE_LABEL = {
-  opening: 'Opening stock', adjustment: 'Adjustment', transfer_in: 'Transfer in', transfer_out: 'Transfer out',
+  opening: 'Opening stock', adjustment: 'Adjustment', revaluation: 'Revaluation', transfer_in: 'Transfer in', transfer_out: 'Transfer out',
   receipt: 'Goods received', return_out: 'Return to supplier', issue: 'Issue', sale: 'Sale', sale_return: 'Sales return',
   production_in: 'Production in', production_out: 'Production out',
 };
@@ -120,7 +120,7 @@ function render() {
   const body = list.map((r) => {
     const qty = Number(r.qty);
     const val = Number(r.value);
-    if (qty >= 0) { qin += qty; vin += val; } else { qout += -qty; vout += -val; }
+    if (qty > 0 || (qty === 0 && val >= 0)) { qin += qty; vin += val; } else { qout += -qty; vout += -val; }
     q += qty;
     v += val;
     return `<tr><td>${r.movement_date}</td><td>${esc(TYPE_LABEL[r.movement_type] || r.movement_type)}</td><td>${esc(r.source_no || '')}</td>

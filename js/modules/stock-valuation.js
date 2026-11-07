@@ -11,7 +11,7 @@ const recon = document.getElementById('recon');
 const panel = document.getElementById('panel');
 
 const TYPE_LABEL = {
-  opening: 'Opening stock', adjustment: 'Adjustment', transfer_in: 'Transfer in', transfer_out: 'Transfer out',
+  opening: 'Opening stock', adjustment: 'Adjustment', revaluation: 'Revaluation', transfer_in: 'Transfer in', transfer_out: 'Transfer out',
   receipt: 'Goods received', return_out: 'Return to supplier', issue: 'Issue', sale: 'Sale', sale_return: 'Sales return',
   production_in: 'Production in', production_out: 'Production out',
 };
