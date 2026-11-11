@@ -67,7 +67,7 @@ export function dialog({ title, message, node, buttons, dismissValue = null, wid
 // cols: 3 gives a wider dialog with three columns, so long forms fit without scrolling.
 // onSubmit(values) may throw; the dialog then stays open and shows the error.
 // Resolves true when saved, false when cancelled.
-function formDialog({ title, fields, values = {}, submitText = 'Save', cols = 2, onSubmit }) {
+function formDialog({ title, fields, values = {}, submitText = 'Save', cols = 2, onSubmit, onChange }) {
   return new Promise((resolve) => {
     const prevFocus = document.activeElement;
     const backdrop = el('div', 'modal-backdrop');
@@ -115,6 +115,8 @@ function formDialog({ title, fields, values = {}, submitText = 'Save', cols = 2,
       label.htmlFor = id;
       if (f.type === 'checkbox') wrap.append(input, label); else wrap.append(label, input);
       if (f.hint) wrap.append(el('span', 'hint', f.hint));
+      // onChange(name, inputs) lets a form fill other fields from this one, e.g. dates from a chosen project
+      if (onChange) input.addEventListener('change', () => onChange(f.name, inputs));
       inputs[f.name] = input;
       grid.append(wrap);
     });

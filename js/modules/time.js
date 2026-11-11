@@ -70,7 +70,7 @@ async function load() {
   const cid = ctx.companyId;
   const since = new Date(Date.now() - RECENT_DAYS * 86400000).toISOString();
   const [p, e, r] = await Promise.all([
-    supabase.from('projects').select('id, code, name, status, customer_id, hourly_rate, time_item_id, customers(code, name), items:time_item_id(code, name, sales_price)')
+    supabase.from('projects').select('id, code, name, status, customer_id, hourly_rate, start_date, end_date, time_item_id, customers(code, name), items:time_item_id(code, name, sales_price)')
       .eq('company_id', cid).order('code'),
     supabase.from('time_entries').select('*, sales_documents(doc_no, status)')
       .eq('company_id', cid).or(`invoice_id.is.null,start_at.gte.${since}`)
@@ -369,6 +369,12 @@ async function openBill() {
 async function openReport() {
   if (!projects.length) return ui.warn('Add a project first (Projects page).');
   const n = new Date();
+  // The period follows the project's own start and end dates; without them, this month to today.
+  const periodOf = (id) => {
+    const p = projects.find((x) => x.id === id) || {};
+    return { from: p.start_date || `${n.getFullYear()}-${pad(n.getMonth() + 1)}-01`, to: p.end_date || todayLocal() };
+  };
+  const start = periodOf(projFilter);
   let opts = null;
   const ok = await ui.form({
     title: 'Project time report',
@@ -385,8 +391,14 @@ async function openReport() {
       { name: 'uom', label: 'Unit', placeholder: 'Hours', hint: 'Heading for the quantity, e.g. Hours or Days. The quantity is the logged time in hours.' },
       { name: 'job', label: 'Show the job', type: 'checkbox' },
     ],
-    values: { project_id: projFilter, from: `${n.getFullYear()}-${pad(n.getMonth() + 1)}-01`, to: todayLocal(), status: 'all', nonbill: false,
+    values: { project_id: projFilter, from: start.from, to: start.to, status: 'all', nonbill: false,
       rate: '', uom: 'Hours', job: false },
+    onChange: (name, inputs) => {
+      if (name !== 'project_id') return;
+      const d = periodOf(inputs.project_id.value);
+      inputs.from.value = d.from;
+      inputs.to.value = d.to;
+    },
     onSubmit: async (v) => {
       if (v.from && v.to && v.to < v.from) throw new Error('The To date is before the From date.');
       if (v.rate !== null && !(v.rate >= 0)) throw new Error('The rate cannot be negative.');
