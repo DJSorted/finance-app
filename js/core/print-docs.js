@@ -235,7 +235,7 @@ const closingHtml = (s) => (s.closing && s.closing.trim() ? `<div class="closing
 const endHtml = (company, s) => `<div class="end">${footer(company, s)}${closingHtml(s)}</div>`;
 const bankHtml = (bank) => (bank ? `<div class="bank"><strong>${esc(bank.label)}</strong><br>${nl(bank.details)}</div>` : '');
 
-export function printHtml(title, body, settings) {
+export function printHtml(title, body, settings, extraCss = '') {
   return new Promise((resolve) => {
     const f = document.createElement('iframe');
     f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
@@ -243,7 +243,7 @@ export function printHtml(title, body, settings) {
     const w = f.contentWindow;
     const d = w.document;
     d.open();
-    d.write(docHtml(title, body, settings));
+    d.write(docHtml(title, body, settings, extraCss));
     d.close();
     const go = async () => {
       await Promise.all([...d.images].map((i) => (i.complete ? null : new Promise((r) => { i.onload = r; i.onerror = r; }))));
@@ -664,6 +664,77 @@ export function sharedDocumentHtml(data) {
   }
   const bar = '<div class="share-bar"><button type="button" id="share-print">Print / Save as PDF</button></div>';
   return docHtml(doc.title, doc.body, s, SHARED_CSS).replace('<body>', `<body>${bar}`);
+}
+
+/* ---------- project time report ---------- */
+// opts: { project: { code, name, job, customers }, customer (row or null), from, to, cur, dec, rate (null when not set),
+//         entries: [{ date, notes, minutes, billable, invoice }], scope (text under the title, e.g. "Unbilled time") }
+// One line per time entry, value = hours x the project rate, totals at the bottom.
+
+const TIME_CSS = (a) => `.tr-band{margin-top:18px;padding:12px 14px;border-left:4px solid ${a};background:${a}12;border-radius:0 6px 6px 0}
+  .tr-band .lbl{font-size:10px;font-weight:bold;letter-spacing:.06em;text-transform:uppercase;color:#6b7280}
+  .tr-band .proj{font-size:18px;font-weight:bold;color:#111;margin-top:2px}
+  .tr-band .sub{color:#4b5563;margin-top:2px}
+  .tr-cols{display:flex;gap:24px;margin-top:14px}.tr-cols>div{flex:1}
+  .tr-cols .lbl{font-size:10px;font-weight:bold;letter-spacing:.06em;text-transform:uppercase;color:#6b7280}
+  .tr-tiles{display:flex;gap:10px;margin-top:14px}
+  .tr-tiles>div{flex:1;border:1px solid #e5e7eb;border-radius:6px;padding:8px 10px}
+  .tr-tiles .lbl{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#6b7280}
+  .tr-tiles .val{font-size:16px;font-weight:bold;margin-top:2px}
+  .tr-tiles>div.hi{border-color:${a};background:${a}0d}.tr-tiles>div.hi .val{color:${a}}
+  table.lines.tr td.d{white-space:nowrap;width:80px}
+  table.lines.tr td.notes{white-space:normal}
+  table.lines.tr tr.nb td{color:#6b7280}
+  table.lines.tr tfoot td{font-weight:bold;border-top:2px solid ${a};border-bottom:0;padding-top:8px}
+  table.lines.tr thead{display:table-header-group}table.lines.tr tr{break-inside:avoid}
+  .tr-tag{display:inline-block;font-size:9.5px;padding:0 5px;border:1px solid #d1d5db;border-radius:3px;color:#6b7280;margin-left:4px}`;
+
+export async function printTimeReport(ctx, opts) {
+  try {
+    const [co, cfg] = await Promise.all([loadCompany(ctx), loadSettings(ctx.companyId)]);
+    const s = cfg.settings;
+    const a = accentOf(s);
+    const { project: p, customer, entries, rate, cur, dec } = opts;
+    const hours = (m) => money(Number(m || 0) / 60, 2);
+    // Value per line rounded first, so the total is the sum of the printed lines.
+    const valueOf = (e) => (e.billable && rate !== null ? Math.round(rate * Number(e.minutes) / 60 * 10 ** dec) / 10 ** dec : null);
+    let mins = 0;
+    let billMins = 0;
+    let total = 0;
+    const rows = entries.map((e) => {
+      const v = valueOf(e);
+      mins += Number(e.minutes || 0);
+      if (e.billable) billMins += Number(e.minutes || 0);
+      if (v !== null) total += v;
+      const tags = `${e.billable ? '' : '<span class="tr-tag">Not billable</span>'}${e.invoice ? `<span class="tr-tag">${esc(e.invoice)}</span>` : ''}`;
+      return `<tr class="${e.billable ? '' : 'nb'}"><td class="d">${esc(e.date)}</td><td class="notes">${nl(e.notes || '')}${tags}</td>
+        <td class="n">${hours(e.minutes)}</td><td class="n">${v === null ? '–' : money(v, dec)}</td></tr>`;
+    }).join('');
+    const anyNonBill = billMins !== mins;
+    const curTxt = cur ? ` (${esc(cur)})` : '';
+    const period = opts.from && opts.to ? `${opts.from} to ${opts.to}` : (opts.from ? `From ${opts.from}` : (opts.to ? `To ${opts.to}` : 'All dates'));
+    const cust = customer || {};
+    const body = `${header(co.row, 'Time report', [['Date', opts.printed], ['Period', period], ['Project code', p.code]])}
+      <div class="tr-band"><div class="lbl">Project</div><div class="proj">${esc(p.name)}</div>
+        <div class="sub">${[p.job ? `Job: ${esc(p.job)}` : '', esc(opts.scope || '')].filter(Boolean).join(' &nbsp;·&nbsp; ')}</div></div>
+      <div class="tr-cols">
+        <div><div class="lbl">${customer ? 'Customer' : 'Internal project'}</div>
+          ${customer ? `<strong>${esc(cust.name || '')}</strong><div class="muted">${detailHtml(cust)}</div>` : ''}</div>
+        <div><div class="tr-tiles">
+          <div><div class="lbl">Entries</div><div class="val">${entries.length}</div></div>
+          <div><div class="lbl">Hours</div><div class="val">${hours(mins)}</div></div>
+          <div><div class="lbl">Rate / hour${curTxt}</div><div class="val">${rate === null ? '–' : money(rate, dec)}</div></div>
+          <div class="hi"><div class="lbl">Value${curTxt}</div><div class="val">${money(total, dec)}</div></div>
+        </div></div></div>
+      <table class="lines tr"><thead><tr><th>Date</th><th>Note / reason</th><th class="n">Hours</th><th class="n">Value${curTxt}</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="4" class="muted">No time in this period.</td></tr>'}</tbody>
+        <tfoot>${anyNonBill ? `<tr><td></td><td class="muted" style="font-weight:normal;border-top:2px solid ${a}">Billable hours</td>
+          <td class="n" style="font-weight:normal;border-top:2px solid ${a}">${hours(billMins)}</td><td style="border-top:2px solid ${a}"></td></tr>` : ''}
+          <tr><td></td><td>Total</td><td class="n">${hours(mins)}</td><td class="n">${money(total, dec)}</td></tr></tfoot></table>
+      ${rate === null ? '<div class="note muted">No hourly rate is set on this project (or a sales price on its item), so no value is shown.</div>' : ''}
+      <div class="end">${footer(co.row, s)}</div>`;
+    await printHtml(`Time report ${p.code} ${opts.from || ''} ${opts.to || ''}`.trim(), body, s, TIME_CSS(a));
+  } catch (e) { ui.errorFrom(e, 'Could not prepare the time report for printing.'); }
 }
 
 /* ---------- statement of account ---------- */

@@ -2,6 +2,7 @@ import { supabase } from '../core/supabase.js';
 import { startPage } from '../core/shell.js';
 import { ui } from '../core/ui.js';
 import { exportSheets } from '../core/export.js';
+import { printTimeReport } from '../core/print-docs.js';
 
 const ctx = await startPage();
 
@@ -166,7 +167,7 @@ function render() {
     billBtn.id = 'bill-btn';
     toolbar.append(billBtn);
   }
-  toolbar.append(btn('Export to Excel', '', doExport));
+  toolbar.append(btn('Print report', '', openReport), btn('Export to Excel', '', doExport));
   renderTable();
 }
 
@@ -341,6 +342,61 @@ async function openBill() {
   picked.clear();
   ui.success('Draft invoice created.');
   location.href = `/pages/invoices.html?open=${docId}`;
+}
+
+/* ---------- report ---------- */
+
+// A printable report of one project's time (Save as PDF from the print dialog): one line per entry with its value
+// at the project rate, and totals. Reads the entries straight from the database, so older billed time is included.
+async function openReport() {
+  if (!projects.length) return ui.warn('Add a project first (Projects page).');
+  const n = new Date();
+  let opts = null;
+  const ok = await ui.form({
+    title: 'Project time report',
+    submitText: 'Print',
+    fields: [
+      { name: 'project_id', label: 'Project', type: 'select', required: true, full: true,
+        options: [{ value: '', label: 'Choose a project' }].concat(projects.map((p) => ({ value: p.id, label: `${projLabel(p)} (${custLabel(p)})` }))) },
+      { name: 'from', label: 'From', type: 'date', hint: 'Leave empty for all dates.' },
+      { name: 'to', label: 'To', type: 'date' },
+      { name: 'status', label: 'Time', type: 'select', options: [
+        { value: 'all', label: 'All time' }, { value: 'unbilled', label: 'Unbilled only' }, { value: 'billed', label: 'Billed only' }] },
+      { name: 'nonbill', label: 'Include time that is not billable', type: 'checkbox' },
+    ],
+    values: { project_id: projFilter, from: `${n.getFullYear()}-${pad(n.getMonth() + 1)}-01`, to: todayLocal(), status: 'all', nonbill: false },
+    onSubmit: async (v) => {
+      if (v.from && v.to && v.to < v.from) throw new Error('The To date is before the From date.');
+      let q = supabase.from('time_entries').select('start_at, minutes, notes, billable, invoice_id, sales_documents(doc_no)')
+        .eq('company_id', ctx.companyId).eq('project_id', v.project_id).not('end_at', 'is', null).order('start_at');
+      if (v.from) q = q.gte('start_at', new Date(`${v.from}T00:00`).toISOString());
+      if (v.to) { const d = new Date(`${v.to}T00:00`); d.setDate(d.getDate() + 1); q = q.lt('start_at', d.toISOString()); }
+      if (v.status === 'unbilled') q = q.is('invoice_id', null);
+      if (v.status === 'billed') q = q.not('invoice_id', 'is', null);
+      if (!v.nonbill) q = q.eq('billable', true);
+      const p = projects.find((x) => x.id === v.project_id);
+      const [e, pr, cu, def, base] = await Promise.all([
+        q.limit(5000),
+        supabase.from('projects').select('*').eq('id', p.id).maybeSingle(),
+        p.customer_id ? supabase.from('customers').select('*').eq('id', p.customer_id).maybeSingle() : Promise.resolve({ data: null }),
+        p.customer_id ? supabase.rpc('customer_defaults', { p_customer: p.customer_id }) : Promise.resolve({ data: null }),
+        supabase.from('company_currencies').select('code').eq('company_id', ctx.companyId).eq('is_base', true).maybeSingle(),
+      ]);
+      if (e.error) throw e.error;
+      // Same currency billing would use: the customer's, else the company's base currency.
+      const cur = (!def.error && def.data && def.data[0] && def.data[0].currency_code) || (base.data ? base.data.code : '');
+      const c = cur ? await supabase.from('currencies').select('decimals').eq('code', cur).maybeSingle() : { data: null };
+      opts = {
+        project: { ...p, ...(pr.data || {}) }, customer: cu.data || null, cur, dec: c.data ? Number(c.data.decimals) : 2,
+        rate: rateOf(p), from: v.from, to: v.to, printed: todayLocal(),
+        scope: [{ unbilled: 'Unbilled time', billed: 'Billed time' }[v.status], v.nonbill ? 'including time not billable' : ''].filter(Boolean).join(', ')
+          .replace(/^./, (ch) => ch.toUpperCase()),
+        entries: e.data.map((x) => ({ date: localDate(x.start_at), notes: x.notes, minutes: x.minutes, billable: x.billable,
+          invoice: x.invoice_id ? (x.sales_documents && x.sales_documents.doc_no ? x.sales_documents.doc_no : 'Draft invoice') : '' })),
+      };
+    },
+  });
+  if (ok && opts) await printTimeReport(ctx, opts);
 }
 
 /* ---------- export ---------- */
