@@ -403,4 +403,23 @@ function buildShell(session, memberships, active) {
   const shell = h('div', 'app-shell');
   shell.append(sidebar, scrim, body);
   document.body.prepend(shell);
+  keepSidebarScroll(sidebar);
+}
+
+// Each menu click loads a new page, so the sidebar would jump back to the top.
+// Remember where it was scrolled and put it back; otherwise bring the active link into view.
+const SCROLL_KEY = 'navScroll';
+function keepSidebarScroll(sidebar) {
+  let saved = null;
+  try { saved = sessionStorage.getItem(SCROLL_KEY); } catch (e) { /* ignore */ }
+  if (saved !== null) sidebar.scrollTop = Number(saved) || 0;
+  const active = sidebar.querySelector('nav a.active');
+  if (active) {
+    const s = sidebar.getBoundingClientRect();
+    const a = active.getBoundingClientRect();
+    if (a.top < s.top || a.bottom > s.bottom) active.scrollIntoView({ block: 'center' });
+  }
+  window.addEventListener('pagehide', () => {
+    try { sessionStorage.setItem(SCROLL_KEY, String(sidebar.scrollTop)); } catch (e) { /* ignore */ }
+  });
 }
