@@ -152,8 +152,9 @@ function docHtml(title, body, s = DEFAULT_SETTINGS, extraCss = '') {
 }
 
 // Asks for the layout, the extra field values and whether to show the project and its job before printing or
-// sharing. Resolves { extras, project, job, template }, or null when cancelled.
-async function askExtras(s, withProject, action = 'Print', withJob = false) {
+// sharing. withLineText offers printing each line's own text under the item instead of the item description.
+// Resolves { extras, project, job, lineText, template }, or null when cancelled.
+async function askExtras(s, withProject, action = 'Print', withJob = false, withLineText = false) {
   const labels = [s.extra1_label, s.extra2_label].map((x) => (x || '').trim());
   const node = document.createElement('div');
   node.className = 'form-grid';
@@ -203,6 +204,18 @@ async function askExtras(s, withProject, action = 'Print', withJob = false) {
     w.append(job, lab);
     node.append(w);
   }
+  let own = null;
+  if (withLineText) {
+    const w = document.createElement('div');
+    w.className = 'field check full';
+    own = document.createElement('input');
+    own.type = 'checkbox';
+    own.style.width = 'auto';
+    const lab = document.createElement('label');
+    lab.textContent = 'Under each item, print the line text (e.g. time entry date and notes) instead of the item description';
+    w.append(own, lab);
+    node.append(w);
+  }
   const res = await ui.dialog({ title: action, node, dismissValue: false,
     buttons: [{ label: 'Cancel', value: false, className: 'btn-ghost' }, { label: action, value: true, className: 'btn-primary' }] });
   if (!res) return null;
@@ -210,6 +223,7 @@ async function askExtras(s, withProject, action = 'Print', withJob = false) {
     extras: labels.map((l, i) => [l, inputs[i] ? inputs[i].value.trim() : '']).filter(([l, v]) => l && v),
     project: proj ? proj.checked : false,
     job: job ? job.checked : false,
+    lineText: own ? own.checked : false,
     template: layout.value,
   };
 }
@@ -272,26 +286,30 @@ function footer(company, s = DEFAULT_SETTINGS) {
 
 // A line's name and the grey text under it: the item name over the item's description. The line's own text
 // is only used when the item has no description (or there is no item). Lines without an item print their text.
-function lineParts(x) {
+// preferOwn (the "line text" print option): the line's own text goes under the item name instead.
+function lineParts(x, preferOwn = false) {
   const it = x.items || {};
   const own = String(x.description || '').trim();
   const name = String(it.name || '').trim() || own;
-  const sub = String(it.description || '').trim() || (own !== name ? own : '');
+  const ownSub = own !== name ? own : '';
+  const sub = preferOwn ? ownSub || String(it.description || '').trim() : String(it.description || '').trim() || ownSub;
   return { name, sub: sub && sub !== name ? sub : '' };
 }
-function lineText(x) {
-  const { name, sub } = lineParts(x);
+// True when the line text option would change what prints on at least one line.
+const lineTextDiffers = (lines) => lines.some((x) => { const a = lineParts(x); const b = lineParts(x, true); return a.sub !== b.sub; });
+function lineText(x, preferOwn) {
+  const { name, sub } = lineParts(x, preferOwn);
   return `${esc(name)}${sub ? `<div class="muted" style="font-size:10.5px">${nl(sub)}</div>` : ''}`;
 }
 
 // outstanding: amount still owed on a posted invoice (null when unknown, e.g. a draft); paid = gross - outstanding.
-function salesBody({ company, base, d, lines, dec, customer, termsName, s, bank, extras = [], projectText = '', jobText = '', outstanding = null }) {
+function salesBody({ company, base, d, lines, dec, customer, termsName, s, bank, extras = [], projectText = '', jobText = '', outstanding = null, ownLineText = false }) {
   const isInv = d.doc_type === 'invoice';
   const hasTax = Number(d.tax_total) > 0;
   const title = `${hasTax ? 'Tax ' : ''}${isInv ? 'invoice' : 'credit note'}`.replace(/^./, (c) => c.toUpperCase());
 
   const rows = lines.map((x, i) => `<tr><td>${i + 1}</td>
-      <td>${lineText(x)}</td>
+      <td>${lineText(x, ownLineText)}</td>
       <td class="n">${qty(x.quantity)}</td><td class="n">${money(x.unit_price, dec)}</td>
       ${hasTax ? `<td class="n">${Number(x.tax_rate) ? `${Number(x.tax_rate)}%` : ''}</td>` : ''}
       <td class="n">${money(x.net_amount, dec)}</td></tr>`).join('');
@@ -330,7 +348,7 @@ function salesBody({ company, base, d, lines, dec, customer, termsName, s, bank,
 
   if (s.template === 'djsorted') {
     return { title, body: djSalesBody({ company, d, lines, dec, customer, termsName, s, bank, extras, projectText, jobText,
-      title, isInv, hasTax, taxRows, payRows, isPaid, rateNote }) };
+      title, isInv, hasTax, taxRows, payRows, isPaid, rateNote, ownLineText }) };
   }
 
   const body = `${header(company, title, [
@@ -353,12 +371,12 @@ function salesBody({ company, base, d, lines, dec, customer, termsName, s, bank,
 
 // The DJ Sorted layout of an invoice or credit note (see DJ_CSS).
 function djSalesBody({ company, d, lines, dec, customer, termsName, s, bank, extras, projectText, jobText,
-  title, isInv, hasTax, taxRows, payRows, isPaid, rateNote }) {
+  title, isInv, hasTax, taxRows, payRows, isPaid, rateNote, ownLineText }) {
   const has = (row, k) => row && typeof row[k] === 'string' && row[k].trim();
   const pick = (row, keys) => keys.filter((k) => has(row, k)).map((k) => nl(row[k].trim())).join('<br>');
   const logo = logoUrl(company);
   const rows = lines.map((x, i) => {
-    const { name, sub } = lineParts(x);
+    const { name, sub } = lineParts(x, ownLineText);
     return `<tr><td class="muted" style="text-align:center;width:18px">${i + 1}</td>
       <td><div class="dj-item">${esc(name)}</div>${sub ? `<div class="muted" style="font-size:10.5px">${nl(sub)}</div>` : ''}</td>
       <td class="n">${qty(x.quantity)}</td><td class="n">${money(x.unit_price, dec)}</td>
@@ -439,7 +457,13 @@ export async function printSalesDocument(ctx, d) {
     const p = projectIds.length ? await supabase.from('projects').select('*').in('id', projectIds) : { data: [] };
     const projects = p.error ? [] : p.data;
     const jobs = [...new Set(projects.map((x) => String(x.job || '').trim()).filter(Boolean))];
-    const ask = await askExtras(cfg.settings, projectIds.length > 0, 'Print', jobs.length > 0);
+    // The line text option is only offered on invoices raised from billed time (Projects > Time)
+    let timeBilled = false;
+    if (projectIds.length && lineTextDiffers(l.data)) {
+      const t = await supabase.from('time_entries').select('id', { count: 'exact', head: true }).eq('invoice_id', d.id);
+      timeBilled = !t.error && t.count > 0;
+    }
+    const ask = await askExtras(cfg.settings, projectIds.length > 0, 'Print', jobs.length > 0, timeBilled);
     if (!ask) return;
     const s = { ...cfg.settings, template: ask.template };
     const projectText = ask.project ? projects.map((x) => `${x.code} - ${x.name}`).join(', ') : '';
@@ -458,6 +482,7 @@ export async function printSalesDocument(ctx, d) {
     const { title, body } = salesBody({
       company: co.row, base: co.base, d, lines: l.data, dec, customer: cust.data || {}, termsName: terms.data ? terms.data.name : '',
       s, bank: bankFor(cfg.banks, d.currency_code), extras: ask.extras, projectText, jobText, outstanding,
+      ownLineText: ask.lineText,
     });
     await printHtml(`${title} ${d.doc_no}`, body, s);
   } catch (e) { ui.errorFrom(e, 'Could not prepare the document for printing.'); }
