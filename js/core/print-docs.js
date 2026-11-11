@@ -668,6 +668,7 @@ export function sharedDocumentHtml(data) {
 
 /* ---------- project time report ---------- */
 // opts: { project: { code, name, job, customers }, customer (row or null), from, to, cur, dec, rate (null when not set), showJob,
+//         uom (heading for the quantity, which is always the logged time in hours),
 //         entries: [{ date, notes, minutes, billable, invoice }], scope (text under the title, e.g. "Unbilled time") }
 // One line per time entry, value = hours x the project rate, totals at the bottom.
 
@@ -695,6 +696,7 @@ export async function printTimeReport(ctx, opts) {
     const s = cfg.settings;
     const a = accentOf(s);
     const { project: p, customer, entries, rate, cur, dec } = opts;
+    const uom = esc(opts.uom || 'Hours');
     const hours = (m) => money(Number(m || 0) / 60, 2);
     // Value per line rounded first, so the total is the sum of the printed lines.
     const valueOf = (e) => (e.billable && rate !== null ? Math.round(rate * Number(e.minutes) / 60 * 10 ** dec) / 10 ** dec : null);
@@ -722,13 +724,13 @@ export async function printTimeReport(ctx, opts) {
           ${customer ? `<strong>${esc(cust.name || '')}</strong><div class="muted">${detailHtml(cust)}</div>` : ''}</div>
         <div><div class="tr-tiles">
           <div><div class="lbl">Entries</div><div class="val">${entries.length}</div></div>
-          <div><div class="lbl">Hours</div><div class="val">${hours(mins)}</div></div>
+          <div><div class="lbl">${uom}</div><div class="val">${hours(mins)}</div></div>
           <div><div class="lbl">Rate${curTxt}</div><div class="val">${rate === null ? '–' : money(rate, dec)}</div></div>
           <div class="hi"><div class="lbl">Value${curTxt}</div><div class="val">${money(total, dec)}</div></div>
         </div></div></div>
-      <table class="lines tr"><thead><tr><th>Date</th><th>Note / reason</th><th class="n">Hours</th><th class="n">Value${curTxt}</th></tr></thead>
+      <table class="lines tr"><thead><tr><th>Date</th><th>Note / reason</th><th class="n">${uom}</th><th class="n">Value${curTxt}</th></tr></thead>
         <tbody>${rows || '<tr><td colspan="4" class="muted">No time in this period.</td></tr>'}</tbody>
-        <tfoot>${anyNonBill ? `<tr><td></td><td class="muted" style="font-weight:normal;border-top:2px solid ${a}">Billable hours</td>
+        <tfoot>${anyNonBill ? `<tr><td></td><td class="muted" style="font-weight:normal;border-top:2px solid ${a}">Billable ${uom.toLowerCase()}</td>
           <td class="n" style="font-weight:normal;border-top:2px solid ${a}">${hours(billMins)}</td><td style="border-top:2px solid ${a}"></td></tr>` : ''}
           <tr><td></td><td>Total</td><td class="n">${hours(mins)}</td><td class="n">${money(total, dec)}</td></tr></tfoot></table>
       ${rate === null ? '<div class="note muted">No rate is set on this project (or a sales price on its item), so no value is shown.</div>' : ''}

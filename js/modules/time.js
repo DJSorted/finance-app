@@ -363,11 +363,15 @@ async function openReport() {
       { name: 'status', label: 'Time', type: 'select', options: [
         { value: 'all', label: 'All time' }, { value: 'unbilled', label: 'Unbilled only' }, { value: 'billed', label: 'Billed only' }] },
       { name: 'nonbill', label: 'Include time that is not billable', type: 'checkbox' },
+      { name: 'rate', label: 'Rate', type: 'number', hint: 'Leave empty to use the project rate.' },
+      { name: 'uom', label: 'Unit', placeholder: 'Hours', hint: 'Heading for the quantity, e.g. Hours or Days. The quantity is the logged time in hours.' },
       { name: 'job', label: 'Show the job', type: 'checkbox' },
     ],
-    values: { project_id: projFilter, from: `${n.getFullYear()}-${pad(n.getMonth() + 1)}-01`, to: todayLocal(), status: 'all', nonbill: false, job: false },
+    values: { project_id: projFilter, from: `${n.getFullYear()}-${pad(n.getMonth() + 1)}-01`, to: todayLocal(), status: 'all', nonbill: false,
+      rate: '', uom: 'Hours', job: false },
     onSubmit: async (v) => {
       if (v.from && v.to && v.to < v.from) throw new Error('The To date is before the From date.');
+      if (v.rate !== null && !(v.rate >= 0)) throw new Error('The rate cannot be negative.');
       let q = supabase.from('time_entries').select('start_at, minutes, notes, billable, invoice_id, sales_documents(doc_no)')
         .eq('company_id', ctx.companyId).eq('project_id', v.project_id).not('end_at', 'is', null).order('start_at');
       if (v.from) q = q.gte('start_at', new Date(`${v.from}T00:00`).toISOString());
@@ -389,7 +393,7 @@ async function openReport() {
       const c = cur ? await supabase.from('currencies').select('decimals').eq('code', cur).maybeSingle() : { data: null };
       opts = {
         project: { ...p, ...(pr.data || {}) }, customer: cu.data || null, cur, dec: c.data ? Number(c.data.decimals) : 2,
-        rate: rateOf(p), from: v.from, to: v.to, printed: todayLocal(), showJob: v.job,
+        rate: v.rate !== null ? v.rate : rateOf(p), uom: v.uom || 'Hours', from: v.from, to: v.to, printed: todayLocal(), showJob: v.job,
         scope: [{ unbilled: 'Unbilled time', billed: 'Billed time' }[v.status], v.nonbill ? 'including time not billable' : ''].filter(Boolean).join(', ')
           .replace(/^./, (ch) => ch.toUpperCase()),
         entries: e.data.map((x) => ({ date: localDate(x.start_at), notes: x.notes, minutes: x.minutes, billable: x.billable,
