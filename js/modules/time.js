@@ -363,8 +363,9 @@ async function openReport() {
       { name: 'status', label: 'Time', type: 'select', options: [
         { value: 'all', label: 'All time' }, { value: 'unbilled', label: 'Unbilled only' }, { value: 'billed', label: 'Billed only' }] },
       { name: 'nonbill', label: 'Include time that is not billable', type: 'checkbox' },
+      { name: 'job', label: 'Show the job', type: 'checkbox' },
     ],
-    values: { project_id: projFilter, from: `${n.getFullYear()}-${pad(n.getMonth() + 1)}-01`, to: todayLocal(), status: 'all', nonbill: false },
+    values: { project_id: projFilter, from: `${n.getFullYear()}-${pad(n.getMonth() + 1)}-01`, to: todayLocal(), status: 'all', nonbill: false, job: false },
     onSubmit: async (v) => {
       if (v.from && v.to && v.to < v.from) throw new Error('The To date is before the From date.');
       let q = supabase.from('time_entries').select('start_at, minutes, notes, billable, invoice_id, sales_documents(doc_no)')
@@ -388,7 +389,7 @@ async function openReport() {
       const c = cur ? await supabase.from('currencies').select('decimals').eq('code', cur).maybeSingle() : { data: null };
       opts = {
         project: { ...p, ...(pr.data || {}) }, customer: cu.data || null, cur, dec: c.data ? Number(c.data.decimals) : 2,
-        rate: rateOf(p), from: v.from, to: v.to, printed: todayLocal(),
+        rate: rateOf(p), from: v.from, to: v.to, printed: todayLocal(), showJob: v.job,
         scope: [{ unbilled: 'Unbilled time', billed: 'Billed time' }[v.status], v.nonbill ? 'including time not billable' : ''].filter(Boolean).join(', ')
           .replace(/^./, (ch) => ch.toUpperCase()),
         entries: e.data.map((x) => ({ date: localDate(x.start_at), notes: x.notes, minutes: x.minutes, billable: x.billable,

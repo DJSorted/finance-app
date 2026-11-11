@@ -667,7 +667,7 @@ export function sharedDocumentHtml(data) {
 }
 
 /* ---------- project time report ---------- */
-// opts: { project: { code, name, job, customers }, customer (row or null), from, to, cur, dec, rate (null when not set),
+// opts: { project: { code, name, job, customers }, customer (row or null), from, to, cur, dec, rate (null when not set), showJob,
 //         entries: [{ date, notes, minutes, billable, invoice }], scope (text under the title, e.g. "Unbilled time") }
 // One line per time entry, value = hours x the project rate, totals at the bottom.
 
@@ -716,14 +716,14 @@ export async function printTimeReport(ctx, opts) {
     const cust = customer || {};
     const body = `${header(co.row, 'Time report', [['Date', opts.printed], ['Period', period], ['Project code', p.code]])}
       <div class="tr-band"><div class="lbl">Project</div><div class="proj">${esc(p.name)}</div>
-        <div class="sub">${[p.job ? `Job: ${esc(p.job)}` : '', esc(opts.scope || '')].filter(Boolean).join(' &nbsp;·&nbsp; ')}</div></div>
+        <div class="sub">${[opts.showJob && p.job ? `Job: ${esc(p.job)}` : '', esc(opts.scope || '')].filter(Boolean).join(' &nbsp;·&nbsp; ')}</div></div>
       <div class="tr-cols">
         <div><div class="lbl">${customer ? 'Customer' : 'Internal project'}</div>
           ${customer ? `<strong>${esc(cust.name || '')}</strong><div class="muted">${detailHtml(cust)}</div>` : ''}</div>
         <div><div class="tr-tiles">
           <div><div class="lbl">Entries</div><div class="val">${entries.length}</div></div>
           <div><div class="lbl">Hours</div><div class="val">${hours(mins)}</div></div>
-          <div><div class="lbl">Rate / hour${curTxt}</div><div class="val">${rate === null ? '–' : money(rate, dec)}</div></div>
+          <div><div class="lbl">Rate${curTxt}</div><div class="val">${rate === null ? '–' : money(rate, dec)}</div></div>
           <div class="hi"><div class="lbl">Value${curTxt}</div><div class="val">${money(total, dec)}</div></div>
         </div></div></div>
       <table class="lines tr"><thead><tr><th>Date</th><th>Note / reason</th><th class="n">Hours</th><th class="n">Value${curTxt}</th></tr></thead>
@@ -731,7 +731,7 @@ export async function printTimeReport(ctx, opts) {
         <tfoot>${anyNonBill ? `<tr><td></td><td class="muted" style="font-weight:normal;border-top:2px solid ${a}">Billable hours</td>
           <td class="n" style="font-weight:normal;border-top:2px solid ${a}">${hours(billMins)}</td><td style="border-top:2px solid ${a}"></td></tr>` : ''}
           <tr><td></td><td>Total</td><td class="n">${hours(mins)}</td><td class="n">${money(total, dec)}</td></tr></tfoot></table>
-      ${rate === null ? '<div class="note muted">No hourly rate is set on this project (or a sales price on its item), so no value is shown.</div>' : ''}
+      ${rate === null ? '<div class="note muted">No rate is set on this project (or a sales price on its item), so no value is shown.</div>' : ''}
       <div class="end">${footer(co.row, s)}</div>`;
     await printHtml(`Time report ${p.code} ${opts.from || ''} ${opts.to || ''}`.trim(), body, s, TIME_CSS(a));
   } catch (e) { ui.errorFrom(e, 'Could not prepare the time report for printing.'); }
