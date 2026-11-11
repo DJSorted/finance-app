@@ -214,9 +214,10 @@ function renderTable() {
     const status = s === 'draft' || s === 'posted'
       ? `<a href="/pages/invoices.html?open=${e.invoice_id}">${esc(doc && doc.doc_no ? doc.doc_no : 'Draft invoice')}</a>`
       : `<span class="badge ${s === 'unbilled' ? 'open' : ''}">${STATE_TEXT[s]}</span>`;
-    const actions = s === 'posted' ? '' : s === 'draft'
-      ? (CAN_BILL ? `<div class="row-actions"><button class="btn btn-sm btn-ghost" type="button" data-release="${e.invoice_id}"
-        title="Take all time off this draft invoice">Release</button></div>` : '')
+    const notesBtn = `<button class="btn btn-sm" type="button" data-notes="${e.id}" title="Time on an invoice: only the notes can change">Notes</button>`;
+    const actions = s === 'posted' ? `<div class="row-actions">${notesBtn}</div>` : s === 'draft'
+      ? `<div class="row-actions">${notesBtn}${CAN_BILL ? `<button class="btn btn-sm btn-ghost" type="button" data-release="${e.invoice_id}"
+        title="Take all time off this draft invoice">Release</button>` : ''}</div>`
       : `<div class="row-actions">
       <button class="btn btn-sm" type="button" data-edit="${e.id}">Edit</button>
       <button class="btn btn-sm btn-ghost" type="button" data-del="${e.id}">Delete</button></div>`;
@@ -244,6 +245,8 @@ panel.addEventListener('change', (ev) => {
 panel.addEventListener('click', async (ev) => {
   const ed = ev.target.closest('[data-edit]');
   if (ed) return openEntry(entries.find((e) => e.id === ed.dataset.edit));
+  const nt = ev.target.closest('[data-notes]');
+  if (nt) return openNotes(entries.find((e) => e.id === nt.dataset.notes));
   const rel = ev.target.closest('[data-release]');
   if (rel) {
     const ok = await ui.confirm({ title: 'Release time', confirmText: 'Release',
@@ -305,6 +308,21 @@ async function openEntry(e) {
     },
   });
   if (saved) { ui.saved('Time'); await refresh(); }
+}
+
+// Billed time is locked except for its notes. The invoice line keeps its own text, so this does not change the invoice.
+async function openNotes(e) {
+  const saved = await ui.form({
+    title: 'Edit notes',
+    fields: [{ name: 'notes', label: 'Notes', type: 'textarea', full: true,
+      hint: 'This time is on an invoice, so only the notes can change. The invoice line keeps the text it was raised with.' }],
+    values: { notes: e.notes || '' },
+    onSubmit: async (v) => {
+      const { error } = await supabase.from('time_entries').update({ notes: v.notes || null }).eq('id', e.id);
+      if (error) throw error;
+    },
+  });
+  if (saved) { ui.saved('Notes'); await refresh(); }
 }
 
 /* ---------- bill ---------- */
