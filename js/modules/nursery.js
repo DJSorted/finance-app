@@ -531,6 +531,7 @@ async function openBatch(b) {
   node.append(t2);
 
   const buttons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }, { label: 'Attachments', value: 'attach', className: 'btn-ghost' }];
+  if (CAN_WORK) buttons.push({ label: 'Edit details', value: 'edit', className: '' });
   if (active && CAN_WORK) buttons.push({ label: 'Add materials', value: 'material', className: '' }, { label: 'Add labour or cost', value: 'cost', className: '' },
     { label: 'Record loss', value: 'loss', className: '' }, { label: 'Set stage', value: 'stage', className: '' },
     { label: 'Set ready date', value: 'ready', className: '' }, { label: 'Split batch', value: 'split', className: '' });
@@ -540,7 +541,8 @@ async function openBatch(b) {
   if (res === 'attach') {
     await openAttachmentsDialog(ctx, { table: 'nursery_batches', recordId: b.id, title: `Attachments: ${b.batch_no}` });
     await openBatch(b);
-  } else if (res === 'material') await done(addMaterial(b));
+  } else if (res === 'edit') await done(editBatch(b));
+  else if (res === 'material') await done(addMaterial(b));
   else if (res === 'cost') await done(addCost(b));
   else if (res === 'loss') await done(recordLoss(b));
   else if (res === 'stage') await done(setStage(b));
@@ -557,6 +559,24 @@ const acctOptions = () => [{ value: '', label: 'Select an account' }].concat(acc
 const CREDIT_KEY = () => `nursery-credit-${ctx.companyId}`;
 const lastCredit = () => { try { return localStorage.getItem(CREDIT_KEY()) || ''; } catch (e) { return ''; } };
 const rememberCredit = (id) => { try { localStorage.setItem(CREDIT_KEY(), id); } catch (e) { /* ignore */ } };
+
+async function editBatch(b) {
+  const saved = await ui.form({
+    title: `Edit ${b.batch_no}`, submitText: 'Save',
+    fields: [
+      { name: 'name', label: 'Batch name', required: true, full: true },
+      { name: 'sown', label: 'Sown on', type: 'date', required: true, hint: 'Age is counted from this date.' },
+      { name: 'location', label: 'Location (bed, tunnel)' },
+      { name: 'notes', label: 'Notes', full: true, hint: 'Variety, plant numbers and costs cannot be changed here.' },
+    ],
+    values: { name: b.name, sown: b.sown_date, location: b.location || '', notes: b.notes || '' },
+    onSubmit: async (v) => {
+      await rpcGo('nursery_update_batch', { p_batch: b.id, p_name: v.name, p_sown: v.sown, p_location: v.location, p_notes: v.notes });
+    },
+  });
+  if (saved) ui.updated('Batch');
+  return saved;
+}
 
 async function addMaterial(b) {
   const mats = items.filter((i) => i.item_type !== 'service' && !i.nursery_batch_id && i.is_active);
