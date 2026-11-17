@@ -84,7 +84,7 @@ async function init() {
   toolbar.append(accSel, el('span', 'muted', 'From'), fromEl, el('span', 'muted', 'To'), toEl, searchEl, runBtn,
     el('span', 'spacer'), progress, exportBtn);
   hint.textContent = `Amounts in ${base}. Posted journals only. Brackets are credit balances. Income statement accounts restart at the start of the financial year, as on the trial balance. `
-    + 'All accounts shows account totals: click an account to see its lines. Choose one account to page through its lines and search them.';
+    + 'All accounts shows account totals: click an account to see its lines. Choose one account to page through its lines and search them, and click a line to see its whole journal.';
   panel.innerHTML = '<p class="muted">Choose the dates and press Run.</p>';
 }
 
@@ -116,11 +116,56 @@ function renderSummary() {
 }
 
 panel.addEventListener('click', (e) => {
+  if (busy) return;
+  const line = e.target.closest('tr[data-jno]');
+  if (line) { openJournal(line.dataset.jno); return; }
   const tr = e.target.closest('tr[data-id]');
-  if (!tr || busy) return;
+  if (!tr) return;
   accSel.value = tr.dataset.id;
   run();
 });
+
+/* ---------- one journal, from a ledger line ---------- */
+
+async function openJournal(jno) {
+  const { data: j, error } = await supabase.from('journals').select('*')
+    .eq('company_id', ctx.companyId).eq('journal_no', jno).maybeSingle();
+  if (error) return ui.errorFrom(error, 'Could not load the journal.');
+  if (!j) return ui.warn(`Journal ${jno} was not found.`);
+  const { data: lines, error: le } = await supabase.from('journal_lines').select('*').eq('journal_id', j.id).order('line_no');
+  if (le) return ui.errorFrom(le, 'Could not load the journal lines.');
+
+  const accById = new Map(accounts.map((a) => [a.id, a]));
+  const node = el('div');
+  const info = el('p', 'muted', [`${j.journal_date} · ${j.description || ''}`, j.reference ? `Ref ${j.reference}` : '',
+    `Source: ${nice(j.source_type)}`].filter(Boolean).join(' · '));
+  node.append(info);
+  let td = 0;
+  let tc = 0;
+  const body = lines.map((l) => {
+    const a = accById.get(l.account_id);
+    const dr = Number(l.base_debit);
+    const cr = Number(l.base_credit);
+    td += dr;
+    tc += cr;
+    const orig = l.currency_code === base ? '' : `${esc(l.currency_code)} ${signed(Number(l.trx_debit) - Number(l.trx_credit))}`;
+    const mine = view.acct && l.account_id === view.acct.r_account_id ? ' class="row-parent"' : '';
+    return `<tr${mine}><td>${esc(a ? `${a.code} - ${a.name}` : '')}</td><td>${esc(l.description || '')}</td>
+      <td class="num">${orig}</td><td class="num">${plain(dr)}</td><td class="num">${plain(cr)}</td></tr>`;
+  }).join('');
+  const wrap = el('div', 'table-wrap');
+  wrap.innerHTML = `<table class="grid"><thead><tr><th>Account</th><th>Description</th><th style="text-align:right">Original</th>
+    <th style="text-align:right">Debit (${esc(base)})</th><th style="text-align:right">Credit (${esc(base)})</th></tr></thead>
+    <tbody>${body}<tr class="row-root"><td colspan="3">Total</td><td class="num">${money(td)}</td><td class="num">${money(tc)}</td></tr></tbody></table>`;
+  node.append(wrap);
+
+  const buttons = [{ label: 'Close', value: 'close', className: 'btn-ghost' }];
+  if (j.source_type === 'manual') buttons.push({ label: 'Open in Journals', value: 'journal', className: '' });
+  else if (j.reference) buttons.push({ label: 'Find source document', value: 'source', className: '' });
+  const res = await ui.dialog({ title: `Journal ${j.journal_no}`, node, wide: true, dismissValue: 'close', buttons });
+  if (res === 'journal') window.open(`/pages/journals.html?q=${encodeURIComponent(j.journal_no)}`, '_blank');
+  else if (res === 'source') window.open(`/pages/search.html?q=${encodeURIComponent(j.reference)}`, '_blank');
+}
 
 /* ---------- one account, paged ---------- */
 
@@ -167,7 +212,8 @@ function renderAccount(rows, size) {
     const dr = Number(r.r_debit);
     const cr = Number(r.r_credit);
     const orig = r.r_currency === base ? '' : `${esc(r.r_currency)} ${signed(Number(r.r_trx_debit) - Number(r.r_trx_credit))}`;
-    return `<tr><td>${r.r_date}</td><td>${esc(r.r_journal_no || '')}</td><td>${esc(nice(r.r_source))}</td><td>${esc(r.r_description || '')}</td>
+    const open = r.r_journal_no ? ` class="clickable" data-jno="${esc(r.r_journal_no)}"` : '';
+    return `<tr${open}><td>${r.r_date}</td><td>${esc(r.r_journal_no || '')}</td><td>${esc(nice(r.r_source))}</td><td>${esc(r.r_description || '')}</td>
       <td>${esc(r.r_reference || '')}</td><td>${esc(r.r_party || '')}</td><td class="num">${orig}</td>
       <td class="num">${plain(dr)}</td><td class="num">${plain(cr)}</td><td class="num">${signed(Number(r.r_balance))}</td></tr>`;
   }).join('');
