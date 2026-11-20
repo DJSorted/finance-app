@@ -4,6 +4,42 @@ import { setupPage } from '../core/setup-page.js';
 
 const STATUS = { open: 'Open', on_hold: 'On hold', closed: 'Closed' };
 
+// Reads every page of a query (PostgREST returns at most 1000 rows per request).
+async function selectAll(build) {
+  const out = [];
+  for (let f = 0; ; f += 1000) {
+    const { data, error } = await build().range(f, f + 999);
+    if (error) throw error;
+    out.push(...data);
+    if (data.length < 1000) break;
+  }
+  return out;
+}
+
+// Hours = all finished time logged on the project. Invoiced = posted invoices less posted credit notes,
+// net of tax, converted to the base currency at each document's rate.
+async function projectTotals(cid) {
+  const [te, sl, cur] = await Promise.all([
+    selectAll(() => supabase.from('time_entries').select('project_id, minutes').eq('company_id', cid).not('end_at', 'is', null).order('id')),
+    selectAll(() => supabase.from('sales_document_lines')
+      .select('project_id, net_amount, sales_documents!inner(company_id, doc_type, status, currency_code, fx_rate)')
+      .eq('sales_documents.company_id', cid).eq('sales_documents.status', 'posted').not('project_id', 'is', null).order('id')),
+    supabase.from('company_currencies').select('code').eq('company_id', cid).eq('is_base', true).maybeSingle(),
+  ]);
+  if (cur.error) throw cur.error;
+  const base = cur.data ? cur.data.code : '';
+  const hours = new Map();
+  const invoiced = new Map();
+  te.forEach((e) => hours.set(e.project_id, (hours.get(e.project_id) || 0) + Number(e.minutes) / 60));
+  sl.forEach((l) => {
+    const d = l.sales_documents;
+    const rate = d.currency_code === base ? 1 : Number(d.fx_rate);
+    const sign = d.doc_type === 'credit_note' ? -1 : 1;
+    invoiced.set(l.project_id, (invoiced.get(l.project_id) || 0) + sign * Number(l.net_amount) * rate);
+  });
+  return { hours, invoiced, base };
+}
+
 const ctx = await startPage();
 if (ctx) {
   await setupPage(ctx, {
@@ -15,13 +51,14 @@ if (ctx) {
     rowLinks: [{ text: 'Report', href: (r) => `/pages/project-report.html?project=${r.id}` }],
 
     lookups: async (c) => {
-      const [cu, it] = await Promise.all([
+      const [cu, it, totals] = await Promise.all([
         supabase.from('customers').select('id, code, name').eq('company_id', c.companyId).eq('is_active', true).order('code'),
         supabase.from('items').select('id, code, name').eq('company_id', c.companyId).eq('is_active', true).eq('item_type', 'service').order('code'),
+        projectTotals(c.companyId),
       ]);
       if (cu.error) throw cu.error;
       if (it.error) throw it.error;
-      return { customers: cu.data, items: it.data };
+      return { customers: cu.data, items: it.data, totals };
     },
 
     columns: (lk) => {
@@ -38,6 +75,8 @@ if (ctx) {
         { header: 'Budget income', num: true, text: (r) => num(r.budget_income), width: 16 },
         { header: 'Budget cost', num: true, text: (r) => num(r.budget_cost), width: 16 },
         { header: 'Hourly rate', num: true, text: (r) => num(r.hourly_rate), width: 14 },
+        { header: 'Total hours', num: true, text: (r) => num(lk.totals.hours.get(r.id)), width: 12 },
+        { header: `Invoiced${lk.totals.base ? ` (${lk.totals.base})` : ''}`, num: true, text: (r) => num(lk.totals.invoiced.get(r.id)), width: 16 },
       ];
     },
 
